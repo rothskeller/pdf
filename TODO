@@ -1,0 +1,10 @@
+Text should perhaps shrink if it doesn't fit in the field.
+Multi-line text should perhaps word-wrap if it doesn't fit in the field.
+Q=1 (centered) and Q=2 (right-justified) should be honored.
+The ascender-to-total ratio should not be hard-coded.
+  All of the above require handling font metrics, which includes hard-coding the
+  metrics for standard Postscript fonts.  Or, alternatively, ignoring the form's
+  desired font for each field and always using a monospace font.
+
+Work around bad Mac OS Preview encoding of radio button settings, if we ever
+decide to rely on reading fields.
