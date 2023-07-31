@@ -18,6 +18,7 @@ func (p *PDF) UpdateObject(ref Reference, obj Object) {
 		p.updates = make(map[Reference]Object)
 	}
 	p.updates[ref] = obj
+	p.xref[ref.Number] = obj
 }
 
 // CreateObject creates a new object with the specified content, and returns a
