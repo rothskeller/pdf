@@ -157,12 +157,13 @@ LOOP:
 		want = name
 		idx := strings.IndexByte(want, '.')
 		if idx >= 0 {
-			want, name = want[:idx], want[idx+1:]
+			want = want[:idx]
 		}
 		if fname != want {
 			continue
 		}
 		if idx >= 0 {
+			name = name[idx+1:]
 			switch k := field["Kids"].(type) {
 			case pdfstruct.Array:
 				fields = k
