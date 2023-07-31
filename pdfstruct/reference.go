@@ -107,7 +107,9 @@ func (p *PDF) Get(r Reference) (obj Object, err error) {
 		xe.cache = obj
 		return obj, nil
 	default:
-		panic("unknown cross reference type")
+		// This is an object that we've added, which hasn't been written
+		// to the file yet.  The xref table contains the actual object.
+		return p.xref[r.Number], nil
 	}
 }
 

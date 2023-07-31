@@ -109,9 +109,6 @@ func getField(p *pdfstruct.PDF, fields map[string]string, obj pdfstruct.Object, 
 // SetField sets the value of a field in the PDF.  The change does not take
 // effect until the caller calls Write on the underlying PDF.
 func SetField(pdf *pdfstruct.PDF, name, value string, fontSize float64) (err error) {
-	if strings.IndexByte(name, '.') >= 0 {
-		return errors.New("nested form fields are not supported")
-	}
 	var form pdfstruct.Dict
 	switch f := pdf.Catalog["AcroForm"].(type) {
 	case nil:
@@ -138,10 +135,12 @@ func SetField(pdf *pdfstruct.PDF, name, value string, fontSize float64) (err err
 	default:
 		return errors.New("AcroForm[Fields] is not an Array")
 	}
+LOOP:
 	for i, f := range fields {
 		var (
 			fieldref pdfstruct.Reference
 			field    pdfstruct.Dict
+			want     string
 			fname    string
 			ftype    pdfstruct.Name
 			ok       bool
@@ -155,8 +154,26 @@ func SetField(pdf *pdfstruct.PDF, name, value string, fontSize float64) (err err
 		if fname, ok = field["T"].(string); !ok {
 			return fmt.Errorf("AcroForm[Fields][%d][T] is not a string", i)
 		}
-		if fname != name {
+		want = name
+		idx := strings.IndexByte(want, '.')
+		if idx >= 0 {
+			want, name = want[:idx], want[idx+1:]
+		}
+		if fname != want {
 			continue
+		}
+		if idx >= 0 {
+			switch k := field["Kids"].(type) {
+			case pdfstruct.Array:
+				fields = k
+			case pdfstruct.Reference:
+				if fields, err = pdf.GetArray(k); err != nil {
+					return err
+				}
+			default:
+				return errors.New("expected hierarchical parent but Kids is not an Array")
+			}
+			goto LOOP
 		}
 		if ftype, ok = field["FT"].(pdfstruct.Name); !ok {
 			return fmt.Errorf("AcroForm[Fields][%d][FT] is not a Name", i)

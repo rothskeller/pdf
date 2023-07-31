@@ -32,7 +32,7 @@ func main() {
 		err    error
 	)
 	if len(os.Args) != 3 {
-		fmt.Fprintf(os.Stderr, "usage: pdfinspect pdf-file path/to/object\n")
+		fmt.Fprintf(os.Stderr, "usage: pdfinspect pdf-file path/to/object|object-id\n")
 		os.Exit(2)
 	}
 	if fh, err = os.Open(os.Args[1]); err != nil {
@@ -43,6 +43,15 @@ func main() {
 	if pdf, err = pdfstruct.Open(fh); err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: %s: %s\n", os.Args[1], err)
 		os.Exit(1)
+	}
+	if objid, err := strconv.Atoi(os.Args[2]); err == nil {
+		if obj, err := pdf.Get(pdfstruct.Reference{Number: objid}); err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: %d: %s\n", objid, err)
+			os.Exit(1)
+		} else {
+			dump(pdf, obj, os.Args[2], 0)
+			os.Exit(0)
+		}
 	}
 	path = strings.Split(os.Args[2], "/")
 	if path[0] == "" {
