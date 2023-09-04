@@ -12,14 +12,3 @@ their values, and update them.
 
 Package `pdfinspect` is a command line tool to inspect the contents of a PDF
 file.
-
-## Legal Text
-
-This software was written by Steve Roth.
-
-Copyright © 2023 by Steven Roth <steve@rothskeller.net>
-
-Permission to use, copy, modify, and/or distribute this software for any purpose
-with or without fee is hereby granted.
-
-DISCLAIMER: THIS SOFTWARE IS WITHOUT WARRANTY.
