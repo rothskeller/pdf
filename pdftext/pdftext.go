@@ -9,7 +9,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/phpdave11/gofpdf"
+	"github.com/rothskeller/gofpdf"
 )
 
 // Style is the style for drawing a text string.
