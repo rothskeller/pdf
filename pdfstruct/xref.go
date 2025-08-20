@@ -96,8 +96,6 @@ func (p *PDF) readXRefSection(addr int) (prev int, err error) {
 	return p.readXRefStream(addr)
 }
 
-var xrefLineRE = regexp.MustCompile(`^(\d{10}) (\d{5}) ([nf]) ?$`)
-
 // readXRefTable reads an old-style cross-reference table.
 func (p *PDF) readXRefTable(addr int) (prev int, err error) {
 	var (
@@ -157,6 +155,13 @@ func (p *PDF) readXRefTable(addr int) (prev int, err error) {
 					return 0, fmt.Errorf("value of /XRefStm should be an integer in trailer dict at offset %d", addr)
 				}
 			default:
+				if _, ok := p.Trailer[key]; !ok {
+					p.Trailer[key] = val
+				}
+				// For backward compatibility:  older versions
+				// of this library erroneously put the Trailer
+				// keys in the Info dict.  We'll keep doing that
+				// in case somebody's relying on it.
 				if _, ok := p.Info[key]; !ok {
 					p.Info[key] = val
 				}
@@ -308,7 +313,7 @@ func (p *PDF) readXRefStream(addr int) (prev int, err error) {
 				return 0, fmt.Errorf("value of /W should be array in xref stream at offset %d", addr)
 			}
 		case "Type", "Length", "Filter", "DecodeParms", "F", "FFilter", "FDecodeParms", "DL":
-			break // not document information
+			// ignore - not document information
 		default:
 			if _, ok := p.Info[key]; !ok {
 				p.Info[key] = val

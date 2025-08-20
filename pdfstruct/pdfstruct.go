@@ -55,6 +55,7 @@ type PDF struct {
 	xref    []any
 	Info    Dict
 	Catalog Dict
+	Trailer Dict
 	updates map[Reference]Object
 }
 
@@ -67,7 +68,7 @@ type Reader interface {
 // Open opens a PDF file.  The supplied file handle must honor io.ReadSeeker,
 // but if Write is going to be called, it must also honor io.Writer.
 func Open(fh Reader) (p *PDF, err error) {
-	p = &PDF{fh: fh, Info: make(Dict)}
+	p = &PDF{fh: fh, Info: make(Dict), Trailer: make(Dict)}
 	if err = p.verifySignature(); err != nil {
 		return nil, err
 	}
