@@ -19,15 +19,15 @@ import (
 	"strings"
 
 	"github.com/davecgh/go-spew/spew"
-	"github.com/rothskeller/pdf/pdfstruct"
+	"github.com/rothskeller/pdf"
 )
 
 func main() {
 	var (
 		fh     *os.File
-		pdf    *pdfstruct.PDF
+		p      *pdf.PDF
 		path   []string
-		root   pdfstruct.Dict
+		root   pdf.Dict
 		prefix string
 		err    error
 	)
@@ -40,49 +40,49 @@ func main() {
 		os.Exit(1)
 	}
 	defer fh.Close()
-	if pdf, err = pdfstruct.Open(fh); err != nil {
+	if p, err = pdf.Open(fh); err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: %s: %s\n", os.Args[1], err)
 		os.Exit(1)
 	}
 	if objid, err := strconv.Atoi(os.Args[2]); err == nil {
-		if obj, err := pdf.Get(pdfstruct.Reference{Number: objid}); err != nil {
+		if obj, err := p.Get(pdf.Reference{Number: objid}); err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: %d: %s\n", objid, err)
 			os.Exit(1)
 		} else {
-			dump(pdf, obj, os.Args[2], 0)
+			dump(p, obj, os.Args[2], 0)
 			os.Exit(0)
 		}
 	}
 	path = strings.Split(os.Args[2], "/")
 	if path[0] == "" {
-		path, root = path[1:], pdf.Info
+		path, root = path[1:], p.Trailer
 	} else {
-		root, prefix = pdf.Catalog, "/Root"
+		root, prefix = p.Catalog, "/Root"
 	}
-	find(pdf, root, prefix, path)
+	find(p, root, prefix, path)
 }
 
-func find(pdf *pdfstruct.PDF, root pdfstruct.Object, prefix string, path []string) {
+func find(p *pdf.PDF, root pdf.Object, prefix string, path []string) {
 	var err error
 
 	if len(path) == 0 {
-		dump(pdf, root, prefix, 0)
+		dump(p, root, prefix, 0)
 		return
 	}
-	if ref, ok := root.(pdfstruct.Reference); ok {
-		if root, err = pdf.Get(ref); err != nil {
+	if ref, ok := root.(pdf.Reference); ok {
+		if root, err = p.Get(ref); err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: %s: (#%d,%d): %s\n", prefix, ref.Number, ref.Generation, err)
 			os.Exit(1)
 		}
 	}
-	if str, ok := root.(pdfstruct.Stream); ok {
+	if str, ok := root.(pdf.Stream); ok {
 		root = str.Dict
 	}
 	switch root := root.(type) {
-	case pdfstruct.Array:
+	case pdf.Array:
 		if path[0] == "*" {
 			for i := range root {
-				find(pdf, root[i], fmt.Sprintf("%s/%d", prefix, i), path[1:])
+				find(p, root[i], fmt.Sprintf("%s/%d", prefix, i), path[1:])
 			}
 			break
 		}
@@ -95,8 +95,8 @@ func find(pdf *pdfstruct.PDF, root pdfstruct.Object, prefix string, path []strin
 			fmt.Fprintf(os.Stderr, "ERROR: index %d is out of bounds for %s (length %d)\n", idx, prefix, len(root))
 			return
 		}
-		find(pdf, root[idx], fmt.Sprintf("%s/%d", prefix, idx), path[1:])
-	case pdfstruct.Dict:
+		find(p, root[idx], fmt.Sprintf("%s/%d", prefix, idx), path[1:])
+	case pdf.Dict:
 		if path[0] == "*" {
 			var keys = make([]string, 0, len(root))
 			for key := range root {
@@ -104,12 +104,12 @@ func find(pdf *pdfstruct.PDF, root pdfstruct.Object, prefix string, path []strin
 			}
 			sort.Strings(keys)
 			for _, key := range keys {
-				find(pdf, root[pdfstruct.Name(key)], fmt.Sprintf("%s/%s", prefix, key), path[1:])
+				find(p, root[pdf.Name(key)], fmt.Sprintf("%s/%s", prefix, key), path[1:])
 			}
 			break
 		}
-		if obj, ok := root[pdfstruct.Name(path[0])]; ok {
-			find(pdf, obj, fmt.Sprintf("%s/%s", prefix, path[0]), path[1:])
+		if obj, ok := root[pdf.Name(path[0])]; ok {
+			find(p, obj, fmt.Sprintf("%s/%s", prefix, path[0]), path[1:])
 		} else {
 			fmt.Fprintf(os.Stderr, "ERROR: key %q does not exist in %s\n", path[0], prefix)
 		}
@@ -118,10 +118,10 @@ func find(pdf *pdfstruct.PDF, root pdfstruct.Object, prefix string, path []strin
 	}
 }
 
-func dump(pdf *pdfstruct.PDF, obj pdfstruct.Object, path string, indent int) {
-	if ref, ok := obj.(pdfstruct.Reference); ok && indent == 0 {
+func dump(p *pdf.PDF, obj pdf.Object, path string, indent int) {
+	if ref, ok := obj.(pdf.Reference); ok && indent == 0 {
 		var err error
-		if obj, err = pdf.Get(ref); err != nil {
+		if obj, err = p.Get(ref); err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: %s: (#%d,%d): %s\n", path, ref.Number, ref.Generation, err)
 			os.Exit(1)
 		}
@@ -140,38 +140,38 @@ func dump(pdf *pdfstruct.PDF, obj pdfstruct.Object, path string, indent int) {
 		fmt.Printf("%q\n", obj)
 	case []byte:
 		fmt.Printf("<%s>\n", hex.EncodeToString(obj))
-	case pdfstruct.Name:
+	case pdf.Name:
 		fmt.Printf("/%s\n", string(obj))
-	case pdfstruct.Array:
+	case pdf.Array:
 		fmt.Println("Array[")
 		for i := range obj {
-			dump(pdf, obj[i], fmt.Sprintf("%*s[%d]", indent*4+4, "", i), indent+1)
+			dump(p, obj[i], fmt.Sprintf("%*s[%d]", indent*4+4, "", i), indent+1)
 		}
 		fmt.Printf("%*s]\n", indent*4, "")
-	case pdfstruct.Dict:
+	case pdf.Dict:
 		fmt.Println("Dict<<")
-		dumpDict(pdf, obj, indent)
+		dumpDict(p, obj, indent)
 		fmt.Printf("%*s>>\n", indent*4, "")
-	case pdfstruct.Stream:
+	case pdf.Stream:
 		fmt.Println("Stream<<")
-		dumpDict(pdf, obj.Dict, indent)
+		dumpDict(p, obj.Dict, indent)
 		fmt.Printf("%*s>>\n", indent*4, "")
 		obj.Decompress(0)
 		spew.Dump(obj.Data)
-	case pdfstruct.Reference:
+	case pdf.Reference:
 		fmt.Printf("(#%d,%d)\n", obj.Number, obj.Generation)
 	default:
 		panic("unknown object type")
 	}
 }
 
-func dumpDict(pdf *pdfstruct.PDF, d pdfstruct.Dict, indent int) {
-	var keys = make([]pdfstruct.Name, 0, len(d))
+func dumpDict(p *pdf.PDF, d pdf.Dict, indent int) {
+	var keys = make([]pdf.Name, 0, len(d))
 	for key := range d {
 		keys = append(keys, key)
 	}
 	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
 	for _, key := range keys {
-		dump(pdf, d[key], fmt.Sprintf("%*s/%s", indent*4+4, "", string(key)), indent+1)
+		dump(p, d[key], fmt.Sprintf("%*s/%s", indent*4+4, "", string(key)), indent+1)
 	}
 }

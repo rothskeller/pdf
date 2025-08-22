@@ -1,4 +1,6 @@
-package pdfstruct
+package pdf
+
+// This file contains the code for parsing PDF object syntax.
 
 import (
 	"bytes"

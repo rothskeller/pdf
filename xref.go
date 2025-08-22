@@ -1,4 +1,7 @@
-package pdfstruct
+package pdf
+
+// This file contains the code that knows how to locate and read cross-reference
+// tables and streams.
 
 import (
 	"bytes"
@@ -158,13 +161,6 @@ func (p *PDF) readXRefTable(addr int) (prev int, err error) {
 				if _, ok := p.Trailer[key]; !ok {
 					p.Trailer[key] = val
 				}
-				// For backward compatibility:  older versions
-				// of this library erroneously put the Trailer
-				// keys in the Info dict.  We'll keep doing that
-				// in case somebody's relying on it.
-				if _, ok := p.Info[key]; !ok {
-					p.Info[key] = val
-				}
 			}
 		}
 	default:
@@ -315,8 +311,8 @@ func (p *PDF) readXRefStream(addr int) (prev int, err error) {
 		case "Type", "Length", "Filter", "DecodeParms", "F", "FFilter", "FDecodeParms", "DL":
 			// ignore - not document information
 		default:
-			if _, ok := p.Info[key]; !ok {
-				p.Info[key] = val
+			if _, ok := p.Trailer[key]; !ok {
+				p.Trailer[key] = val
 			}
 		}
 	}

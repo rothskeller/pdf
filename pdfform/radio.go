@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/rothskeller/pdf/pdfstruct"
+	"github.com/rothskeller/pdf"
 )
 
 /*
@@ -51,90 +51,90 @@ field data but leaves it uneditable.)
 
 // setRadioButton sets the state of a set of radio buttons.  This involves
 // setting V on the parent field and /AS on each of the individual buttons.
-func setRadioButton(pdf *pdfstruct.PDF, fieldref pdfstruct.Reference, field pdfstruct.Dict, value string) (err error) {
+func setRadioButton(p *pdf.PDF, fieldref pdf.Reference, field pdf.Dict, value string) (err error) {
 	var found bool
 
 	// Update the V in the parent field.
-	if v, ok := field["V"].(pdfstruct.Name); ok && string(v) == value {
+	if v, ok := field["V"].(pdf.Name); ok && string(v) == value {
 		return nil // no change needed
 	}
 	if value == "Off" {
 		delete(field, "V")
 		found = true
 	} else {
-		field["V"] = pdfstruct.Name(value)
+		field["V"] = pdf.Name(value)
 	}
-	pdf.UpdateObject(fieldref, field)
+	p.UpdateObject(fieldref, field)
 	// Update the /AS of each of the Kids.  While doing so, make sure the
 	// chosen value is valid.
-	var kids pdfstruct.Array
+	var kids pdf.Array
 	switch k := field["Kids"].(type) {
 	case nil:
 		return errors.New("field[Kids] doesn't exist")
-	case pdfstruct.Reference:
-		if kids, err = pdf.GetArray(k); err != nil {
+	case pdf.Reference:
+		if kids, err = p.GetArray(k); err != nil {
 			return fmt.Errorf("field[Kids]: %s", err)
 		}
-	case pdfstruct.Array:
+	case pdf.Array:
 		kids = k
 	default:
 		return errors.New("field[Kids] is not an Array")
 	}
 	for i, k := range kids {
 		// Get the kid Dict.
-		var kid pdfstruct.Dict
-		var kidref pdfstruct.Reference
+		var kid pdf.Dict
+		var kidref pdf.Reference
 		switch k := k.(type) {
-		case pdfstruct.Reference:
-			if kid, err = pdf.GetDict(k); err != nil {
+		case pdf.Reference:
+			if kid, err = p.GetDict(k); err != nil {
 				return fmt.Errorf("field[Kids][%d]: %s", i, err)
 			}
 			kidref = k
-		case pdfstruct.Dict:
+		case pdf.Dict:
 			kid = k
 			kidref = fieldref
 		default:
 			return fmt.Errorf("field[Kids][%d] is not a Dict", i)
 		}
 		// Get the kid's AP dict.
-		var ap pdfstruct.Dict
+		var ap pdf.Dict
 		switch a := kid["AP"].(type) {
-		case pdfstruct.Reference:
-			if ap, err = pdf.GetDict(a); err != nil {
+		case pdf.Reference:
+			if ap, err = p.GetDict(a); err != nil {
 				return fmt.Errorf("field[Kids][%d][AP]: %s", i, err)
 			}
-		case pdfstruct.Dict:
+		case pdf.Dict:
 			ap = a
 		default:
 			return fmt.Errorf("field[Kids][%d][AP] is not a Dict", i)
 		}
 		// Get the kid's AP/N dict.
-		var apn pdfstruct.Dict
+		var apn pdf.Dict
 		switch n := ap["N"].(type) {
-		case pdfstruct.Reference:
-			if apn, err = pdf.GetDict(n); err != nil {
+		case pdf.Reference:
+			if apn, err = p.GetDict(n); err != nil {
 				return fmt.Errorf("field[Kids][%d][AP][N]: %s", i, err)
 			}
-		case pdfstruct.Dict:
+		case pdf.Dict:
 			apn = n
 		default:
 			return fmt.Errorf("field[Kids][%d][AP][N] is not a Dict", i)
 		}
 		// Does it have an entry that matches the requested value?
-		if _, ok := apn[pdfstruct.Name(value)]; ok {
+		if _, ok := apn[pdf.Name(value)]; ok {
 			// Yes, so set the /AS for this kid to that value.
 			found = true
-			kid["AS"] = pdfstruct.Name(value)
+			kid["AS"] = pdf.Name(value)
 			if kidref != fieldref {
-				pdf.UpdateObject(kidref, kid)
+				p.UpdateObject(kidref, kid)
 			}
 		} else {
 			// No, so set the /AS for this kid to /Off, if it isn't
 			// already.
-			if kid["AS"] != pdfstruct.Name("Off") {
-				kid["AS"] = pdfstruct.Name("Off")
+			if kid["AS"] != pdf.Name("Off") {
+				kid["AS"] = pdf.Name("Off")
 				if kidref != fieldref {
-					pdf.UpdateObject(kidref, kid)
+					p.UpdateObject(kidref, kid)
 				}
 			}
 		}

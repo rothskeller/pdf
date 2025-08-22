@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/rothskeller/pdf/pdfstruct"
+	"github.com/rothskeller/pdf"
 )
 
 /*
@@ -68,7 +68,7 @@ the fields.
 // to use; it is required for fields that do not have a font size supplied in
 // the PDF, and ignored otherwise.
 func setText(
-	pdf *pdfstruct.PDF, form, field pdfstruct.Dict, fieldref pdfstruct.Reference, value string, fontSize float64,
+	p *pdf.PDF, form, field pdf.Dict, fieldref pdf.Reference, value string, fontSize float64,
 ) (err error) {
 	// If the field value isn't changing, we don't need to do anything.
 	if curr, ok := field["V"].(string); ok && curr == value {
@@ -76,28 +76,28 @@ func setText(
 	}
 	// Update the field value and save it.
 	field["V"] = value
-	pdf.UpdateObject(fieldref, field)
+	p.UpdateObject(fieldref, field)
 	// Look up the font name and size from the default field appearance.
 	var fontName string
-	if fontName, fontSize, err = textFontNameSize(pdf, field, fontSize); err != nil {
+	if fontName, fontSize, err = textFontNameSize(p, field, fontSize); err != nil {
 		return err
 	}
 	// Find the font dictionary.
-	var fontRef pdfstruct.Reference
-	if fontRef, err = textResourcesFont(pdf, form, fontName); err != nil {
+	var fontRef pdf.Reference
+	if fontRef, err = textResourcesFont(p, form, fontName); err != nil {
 		return err
 	}
 	// Get the list of the annotation widgets for the field.  (Usually there
 	// is only one, but sometimes there are more.)
-	var kids pdfstruct.Array
+	var kids pdf.Array
 	switch a := field["Kids"].(type) {
 	case nil:
 		kids = append(kids, fieldref)
-	case pdfstruct.Reference:
-		if kids, err = pdf.GetArray(a); err != nil {
+	case pdf.Reference:
+		if kids, err = p.GetArray(a); err != nil {
 			return fmt.Errorf("field[Kids]: %s", err)
 		}
-	case pdfstruct.Array:
+	case pdf.Array:
 		kids = a
 	default:
 		return errors.New("field[Kids] is not an Array")
@@ -105,14 +105,14 @@ func setText(
 	// Loop over the list and update each of them.
 	for i, k := range kids {
 		// Get the widget dictionary and its reference.
-		var kid pdfstruct.Dict
-		var kidref pdfstruct.Reference
+		var kid pdf.Dict
+		var kidref pdf.Reference
 		if k == fieldref {
 			kid, kidref = field, fieldref
 		} else {
 			switch k := k.(type) {
-			case pdfstruct.Reference:
-				if kid, err = pdf.GetDict(k); err != nil {
+			case pdf.Reference:
+				if kid, err = p.GetDict(k); err != nil {
 					return fmt.Errorf("field[Kids][%d]: %s", i, err)
 				}
 				kidref = k
@@ -122,14 +122,14 @@ func setText(
 		}
 		// Compute the bounding box for the widget.
 		var bbox []float64
-		var bboxa pdfstruct.Array
-		if bbox, bboxa, err = textBBox(pdf, kidref, kid); err != nil {
+		var bboxa pdf.Array
+		if bbox, bboxa, err = textBBox(p, kidref, kid); err != nil {
 			return fmt.Errorf("field[Kids][%d]: %s", i, err)
 		}
 		// Compute the content stream for the widget.
 		var cstream = textCStream(bbox, value, fontName, fontSize)
 		// Compute the appearance for the field and save it.
-		if err = textAPN(pdf, kidref, kid, bboxa, value, fontName, fontRef, cstream); err != nil {
+		if err = textAPN(p, kidref, kid, bboxa, value, fontName, fontRef, cstream); err != nil {
 			return fmt.Errorf("field[Kids][%d]: %s", i, err)
 		}
 	}
@@ -138,18 +138,18 @@ func setText(
 
 // textBBox computes the bounding box for the field appearance XObject.
 func textBBox(
-	pdf *pdfstruct.PDF, widgetref pdfstruct.Reference, widget pdfstruct.Dict,
-) (bbox []float64, bboxa pdfstruct.Array, err error) {
+	p *pdf.PDF, widgetref pdf.Reference, widget pdf.Dict,
+) (bbox []float64, bboxa pdf.Array, err error) {
 	// We need to get the widget rectangle.
-	var recta pdfstruct.Array
+	var recta pdf.Array
 	switch a := widget["Rect"].(type) {
 	case nil:
 		return nil, nil, errors.New("widget[Rect] is not set")
-	case pdfstruct.Reference:
-		if recta, err = pdf.GetArray(a); err != nil {
+	case pdf.Reference:
+		if recta, err = p.GetArray(a); err != nil {
 			return nil, nil, fmt.Errorf("widget[Rect]: %s", err)
 		}
-	case pdfstruct.Array:
+	case pdf.Array:
 		recta = a
 	default:
 		return nil, nil, errors.New("widget[Rect] is not an Array")
@@ -172,7 +172,7 @@ func textBBox(
 	bbox = make([]float64, 4)
 	bbox[0], bbox[1], bbox[2], bbox[3] = 0, 0, rect[2]-rect[0], rect[3]-rect[1]
 	// Convert it into an Array.
-	bboxa = make(pdfstruct.Array, 4)
+	bboxa = make(pdf.Array, 4)
 	for i, v := range bbox {
 		bboxa[i] = v
 	}
@@ -184,13 +184,13 @@ var textDAFontRE = regexp.MustCompile(`/(\S+)\s*([0-9]+(?:\.[0-9]*)?)\s*Tf\b`)
 // textFontNameSize returns the font name and size from the default appearance of the
 // field.  If the font size is not specified there, it returns the supplied font
 // size.
-func textFontNameSize(pdf *pdfstruct.PDF, field pdfstruct.Dict, defaultSize float64) (name string, size float64, err error) {
+func textFontNameSize(p *pdf.PDF, field pdf.Dict, defaultSize float64) (name string, size float64, err error) {
 	var da string
 	switch a := field["DA"].(type) {
 	case nil:
 		return "", 0, errors.New("field[DA] is not set")
-	case pdfstruct.Reference: // hardly seems likely, but it's allowed
-		if da, err = pdf.GetString(a); err != nil {
+	case pdf.Reference: // hardly seems likely, but it's allowed
+		if da, err = p.GetString(a); err != nil {
 			return "", 0, fmt.Errorf("field[DA]: %s", err)
 		}
 	case string:
@@ -211,37 +211,37 @@ func textFontNameSize(pdf *pdfstruct.PDF, field pdfstruct.Dict, defaultSize floa
 }
 
 // textResourcesFont returns the font dictionary for the named font.
-func textResourcesFont(pdf *pdfstruct.PDF, form pdfstruct.Dict, fontName string) (ref pdfstruct.Reference, err error) {
-	var dr pdfstruct.Dict
+func textResourcesFont(p *pdf.PDF, form pdf.Dict, fontName string) (ref pdf.Reference, err error) {
+	var dr pdf.Dict
 	switch a := form["DR"].(type) {
 	case nil:
 		return ref, errors.New("AcroForm[DR] is not present")
-	case pdfstruct.Reference:
-		if dr, err = pdf.GetDict(a); err != nil {
+	case pdf.Reference:
+		if dr, err = p.GetDict(a); err != nil {
 			return ref, fmt.Errorf("AcroForm[DR]: %s", err)
 		}
-	case pdfstruct.Dict:
+	case pdf.Dict:
 		dr = a
 	default:
 		return ref, errors.New("AcroForm[DR] is not a Dict")
 	}
-	var font pdfstruct.Dict
+	var font pdf.Dict
 	switch a := dr["Font"].(type) {
 	case nil:
 		return ref, errors.New("AcroForm[DR][Font] is not present")
-	case pdfstruct.Reference:
-		if font, err = pdf.GetDict(a); err != nil {
+	case pdf.Reference:
+		if font, err = p.GetDict(a); err != nil {
 			return ref, fmt.Errorf("AcroForm[DR][Font]: %s", err)
 		}
-	case pdfstruct.Dict:
+	case pdf.Dict:
 		font = a
 	default:
 		return ref, errors.New("AcroForm[DR][Font] is not a Dict")
 	}
-	switch a := font[pdfstruct.Name(fontName)].(type) {
+	switch a := font[pdf.Name(fontName)].(type) {
 	case nil:
 		return ref, fmt.Errorf("field[DA] references font %q which is not defined in AcroForm[DR][Font]", fontName)
-	case pdfstruct.Reference:
+	case pdf.Reference:
 		return a, nil
 	default:
 		return ref, fmt.Errorf("AcroForm[DR][Form][%s] is not a Reference", fontName)
@@ -313,54 +313,54 @@ func encodeString(s string) string {
 
 // textAPN computes and saves the appearance of a text field.
 func textAPN(
-	pdf *pdfstruct.PDF, widgetref pdfstruct.Reference, widget pdfstruct.Dict, bbox pdfstruct.Array, value, fontName string,
-	fontRef pdfstruct.Reference, cstream []byte,
+	p *pdf.PDF, widgetref pdf.Reference, widget pdf.Dict, bbox pdf.Array, value, fontName string,
+	fontRef pdf.Reference, cstream []byte,
 ) (err error) {
 	// Generate the AP/N.
-	var apn pdfstruct.Stream
-	apn.Dict = make(pdfstruct.Dict)
-	apn.Dict["Type"] = pdfstruct.Name("XObject")
-	apn.Dict["Subtype"] = pdfstruct.Name("Form")
+	var apn pdf.Stream
+	apn.Dict = make(pdf.Dict)
+	apn.Dict["Type"] = pdf.Name("XObject")
+	apn.Dict["Subtype"] = pdf.Name("Form")
 	apn.Dict["BBox"] = bbox
-	var rd = pdfstruct.Dict{
-		"Font": pdfstruct.Dict{
-			pdfstruct.Name(fontName): fontRef,
+	var rd = pdf.Dict{
+		"Font": pdf.Dict{
+			pdf.Name(fontName): fontRef,
 		},
-		"ProcSet": pdfstruct.Array{
-			pdfstruct.Name("PDF"),
-			pdfstruct.Name("Text"),
+		"ProcSet": pdf.Array{
+			pdf.Name("PDF"),
+			pdf.Name("Text"),
 		},
 	}
-	apn.Dict[pdfstruct.Name("Resources")] = rd
+	apn.Dict[pdf.Name("Resources")] = rd
 	apn.Data = cstream
 	// Now figure out where to put it.  Note that N must be a separate
 	// object; the spec doesn't say that, but most readers won't work if it
 	// isn't.
-	var ap pdfstruct.Dict
+	var ap pdf.Dict
 	switch a := widget["AP"].(type) {
 	case nil:
-		ap = make(pdfstruct.Dict)
-		ap["N"] = pdf.CreateObject(apn)
+		ap = make(pdf.Dict)
+		ap["N"] = p.CreateObject(apn)
 		widget["AP"] = ap
-		pdf.UpdateObject(widgetref, widget)
-	case pdfstruct.Reference:
-		if ap, err = pdf.GetDict(a); err != nil {
+		p.UpdateObject(widgetref, widget)
+	case pdf.Reference:
+		if ap, err = p.GetDict(a); err != nil {
 			return fmt.Errorf("widget[AP]: %s", err)
 		}
 		switch b := ap["N"].(type) {
-		case pdfstruct.Reference:
-			pdf.UpdateObject(b, apn)
+		case pdf.Reference:
+			p.UpdateObject(b, apn)
 		default:
-			ap["N"] = pdf.CreateObject(apn)
-			pdf.UpdateObject(a, ap)
+			ap["N"] = p.CreateObject(apn)
+			p.UpdateObject(a, ap)
 		}
-	case pdfstruct.Dict:
+	case pdf.Dict:
 		ap = a
 		switch b := ap["N"].(type) {
-		case pdfstruct.Reference:
-			pdf.UpdateObject(b, apn)
+		case pdf.Reference:
+			p.UpdateObject(b, apn)
 		default:
-			ap["N"] = pdf.CreateObject(apn)
+			ap["N"] = p.CreateObject(apn)
 		}
 	default:
 		return errors.New("widget[AP] is not a Dict")

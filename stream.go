@@ -1,4 +1,7 @@
-package pdfstruct
+package pdf
+
+// This file contains the code that knows how to decompress and decode stream
+// data.
 
 import (
 	"bytes"

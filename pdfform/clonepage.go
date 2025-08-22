@@ -3,7 +3,7 @@ package pdfform
 import (
 	"errors"
 
-	"github.com/rothskeller/pdf/pdfstruct"
+	"github.com/rothskeller/pdf"
 )
 
 // ClonePage clones the specified page of the PDF document, giving it new copies
@@ -19,14 +19,14 @@ import (
 //
 // Limitations: only works for PDF files with a flat page structure.  Does not
 // preserve annotations other than fillable fields on the cloned page.
-func ClonePage(p *pdfstruct.PDF, pagenum int, prefix string) (err error) {
+func ClonePage(p *pdf.PDF, pagenum int, prefix string) (err error) {
 	var (
-		newPage    pdfstruct.Dict
-		newPageRef pdfstruct.Reference
-		oldPageRef pdfstruct.Reference
-		fields     pdfstruct.Array
-		newList    pdfstruct.Dict
-		newListRef pdfstruct.Reference
+		newPage    pdf.Dict
+		newPageRef pdf.Reference
+		oldPageRef pdf.Reference
+		fields     pdf.Array
+		newList    pdf.Dict
+		newListRef pdf.Reference
 	)
 	if newPage, newPageRef, oldPageRef, err = clonePage(p, pagenum); err != nil {
 		return err
@@ -44,14 +44,14 @@ func ClonePage(p *pdfstruct.PDF, pagenum int, prefix string) (err error) {
 
 // clonePage creates a clone of the specified page, with everything except the
 // annotations.
-func clonePage(p *pdfstruct.PDF, pagenum int) (newPage pdfstruct.Dict, newPageRef, oldPageRef pdfstruct.Reference, err error) {
+func clonePage(p *pdf.PDF, pagenum int) (newPage pdf.Dict, newPageRef, oldPageRef pdf.Reference, err error) {
 	// Get the Pages dictionary.
-	pagesRef, ok := p.Catalog["Pages"].(pdfstruct.Reference)
+	pagesRef, ok := p.Catalog["Pages"].(pdf.Reference)
 	if !ok {
 		err = errors.New("/Pages is not a reference")
 		return
 	}
-	var pages pdfstruct.Dict
+	var pages pdf.Dict
 	if pages, err = p.GetDict(pagesRef); err != nil {
 		return
 	}
@@ -63,14 +63,14 @@ func clonePage(p *pdfstruct.PDF, pagenum int) (newPage pdfstruct.Dict, newPageRe
 		return
 	}
 	// Make a new page and add it to the Pages/Kids array.
-	newPage = make(pdfstruct.Dict)
+	newPage = make(pdf.Dict)
 	newPageRef = p.CreateObject(newPage)
-	var kids pdfstruct.Array
+	var kids pdf.Array
 	switch k := pages["Kids"].(type) {
-	case pdfstruct.Array:
+	case pdf.Array:
 		kids = append(k, nil)
 		pages["Kids"] = kids
-	case pdfstruct.Reference:
+	case pdf.Reference:
 		if kids, err = p.GetArray(k); err != nil {
 			return
 		}
@@ -88,16 +88,16 @@ func clonePage(p *pdfstruct.PDF, pagenum int) (newPage pdfstruct.Dict, newPageRe
 		err = errors.New("not that many pages")
 		return
 	}
-	if oldPageRef, ok = kids[pagenum].(pdfstruct.Reference); !ok {
+	if oldPageRef, ok = kids[pagenum].(pdf.Reference); !ok {
 		err = errors.New("Pages/Kids/# is not a reference")
 		return
 	}
-	var oldPage pdfstruct.Dict
+	var oldPage pdf.Dict
 	if oldPage, err = p.GetDict(oldPageRef); err != nil {
 		return
 	}
 	// Clone the page, with everything except the top Annots key.
-	var clones = make(map[pdfstruct.Reference]pdfstruct.Reference)
+	var clones = make(map[pdf.Reference]pdf.Reference)
 	clones[oldPageRef] = newPageRef
 	clones[pagesRef] = pagesRef
 	for key, ov := range oldPage {
@@ -113,11 +113,11 @@ func clonePage(p *pdfstruct.PDF, pagenum int) (newPage pdfstruct.Dict, newPageRe
 
 // newFieldList creates a new field list as a child of the top-level field list,
 // with the specified name.
-func newFieldList(p *pdfstruct.PDF, name string) (
-	fields pdfstruct.Array, newField pdfstruct.Dict, newFieldRef pdfstruct.Reference, err error,
+func newFieldList(p *pdf.PDF, name string) (
+	fields pdf.Array, newField pdf.Dict, newFieldRef pdf.Reference, err error,
 ) {
 	// Get the AcroForm dictionary.
-	formref, ok := p.Catalog["AcroForm"].(pdfstruct.Reference)
+	formref, ok := p.Catalog["AcroForm"].(pdf.Reference)
 	if !ok {
 		err = errors.New("AcroForm is not a reference")
 		return
@@ -127,16 +127,16 @@ func newFieldList(p *pdfstruct.PDF, name string) (
 		return
 	}
 	// Make the new field.
-	newField = make(pdfstruct.Dict)
+	newField = make(pdf.Dict)
 	newField["T"] = name
 	newFieldRef = p.CreateObject(newField)
 	// Add it to the AcroForm/Fields list.
 	switch f := form["Fields"].(type) {
-	case pdfstruct.Array:
+	case pdf.Array:
 		fields = append(f, newFieldRef)
 		form["Fields"] = fields
 		p.UpdateObject(formref, form)
-	case pdfstruct.Reference:
+	case pdf.Reference:
 		if fields, err = p.GetArray(f); err != nil {
 			return
 		}
@@ -154,13 +154,13 @@ func newFieldList(p *pdfstruct.PDF, name string) (
 // and parent set to newTreeRef.  It adds those copies to newKids and to
 // newPageAnnots.
 func cloneFields(
-	p *pdfstruct.PDF, fieldsKids pdfstruct.Array, oldPageRef, newPageRef, newTreeRef pdfstruct.Reference,
-) (list pdfstruct.Array, err error) {
-	var clones = make(map[pdfstruct.Reference]pdfstruct.Reference)
+	p *pdf.PDF, fieldsKids pdf.Array, oldPageRef, newPageRef, newTreeRef pdf.Reference,
+) (list pdf.Array, err error) {
+	var clones = make(map[pdf.Reference]pdf.Reference)
 	clones[oldPageRef] = newPageRef
 	for _, oldfieldrefobj := range fieldsKids {
 		// Get the field dictionary.
-		oldfieldref, ok := oldfieldrefobj.(pdfstruct.Reference)
+		oldfieldref, ok := oldfieldrefobj.(pdf.Reference)
 		if !ok {
 			return nil, errors.New("AcroForm/Fields/# is not a reference")
 		}
@@ -169,7 +169,7 @@ func cloneFields(
 			return nil, err
 		}
 		// If it's not on the page we're cloning, ignore it.
-		if oldfieldpage, ok := oldfield["P"].(pdfstruct.Reference); !ok || oldfieldpage.Number != oldPageRef.Number || oldfieldpage.Generation != oldPageRef.Generation {
+		if oldfieldpage, ok := oldfield["P"].(pdf.Reference); !ok || oldfieldpage.Number != oldPageRef.Number || oldfieldpage.Generation != oldPageRef.Generation {
 			continue
 		}
 		// Clone it and add it to the list.
@@ -184,10 +184,10 @@ func cloneFields(
 
 // cloneField clones a single field and returns a reference to it.
 func cloneField(
-	p *pdfstruct.PDF, oldField pdfstruct.Dict, oldFieldRef, newPageRef, newParentRef pdfstruct.Reference,
-	clones map[pdfstruct.Reference]pdfstruct.Reference,
-) (newFieldRef pdfstruct.Reference, err error) {
-	var newField pdfstruct.Dict
+	p *pdf.PDF, oldField pdf.Dict, oldFieldRef, newPageRef, newParentRef pdf.Reference,
+	clones map[pdf.Reference]pdf.Reference,
+) (newFieldRef pdf.Reference, err error) {
+	var newField pdf.Dict
 	if newField, err = cloneDict(p, oldField, clones); err != nil {
 		return
 	}
@@ -199,18 +199,18 @@ func cloneField(
 }
 
 func cloneObject(
-	p *pdfstruct.PDF, old pdfstruct.Object, clones map[pdfstruct.Reference]pdfstruct.Reference,
-) (no pdfstruct.Object, err error) {
+	p *pdf.PDF, old pdf.Object, clones map[pdf.Reference]pdf.Reference,
+) (no pdf.Object, err error) {
 	switch old := old.(type) {
-	case nil, bool, int, float64, string, []byte, pdfstruct.Name:
+	case nil, bool, int, float64, string, []byte, pdf.Name:
 		return old, nil
-	case pdfstruct.Array:
+	case pdf.Array:
 		return cloneArray(p, old, clones)
-	case pdfstruct.Dict:
+	case pdf.Dict:
 		return cloneDict(p, old, clones)
-	case pdfstruct.Stream:
+	case pdf.Stream:
 		return cloneStream(p, old, clones)
-	case pdfstruct.Reference:
+	case pdf.Reference:
 		return cloneReference(p, old, clones)
 	default:
 		panic("unexpected object type")
@@ -218,8 +218,8 @@ func cloneObject(
 }
 
 func cloneArray(
-	p *pdfstruct.PDF, old pdfstruct.Array, clones map[pdfstruct.Reference]pdfstruct.Reference,
-) (na pdfstruct.Array, err error) {
+	p *pdf.PDF, old pdf.Array, clones map[pdf.Reference]pdf.Reference,
+) (na pdf.Array, err error) {
 	for _, ov := range old {
 		nv, err := cloneObject(p, ov, clones)
 		if err != nil {
@@ -231,9 +231,9 @@ func cloneArray(
 }
 
 func cloneDict(
-	p *pdfstruct.PDF, old pdfstruct.Dict, clones map[pdfstruct.Reference]pdfstruct.Reference,
-) (nd pdfstruct.Dict, err error) {
-	nd = make(pdfstruct.Dict)
+	p *pdf.PDF, old pdf.Dict, clones map[pdf.Reference]pdf.Reference,
+) (nd pdf.Dict, err error) {
+	nd = make(pdf.Dict)
 	for key, ov := range old {
 		if nd[key], err = cloneObject(p, ov, clones); err != nil {
 			return nil, err
@@ -243,16 +243,16 @@ func cloneDict(
 }
 
 func cloneStream(
-	p *pdfstruct.PDF, old pdfstruct.Stream, clones map[pdfstruct.Reference]pdfstruct.Reference,
-) (ns pdfstruct.Stream, err error) {
+	p *pdf.PDF, old pdf.Stream, clones map[pdf.Reference]pdf.Reference,
+) (ns pdf.Stream, err error) {
 	ns.Data = old.Data
 	ns.Dict, err = cloneDict(p, old.Dict, clones)
 	return
 }
 
 func cloneReference(
-	p *pdfstruct.PDF, old pdfstruct.Reference, clones map[pdfstruct.Reference]pdfstruct.Reference,
-) (nr pdfstruct.Reference, err error) {
+	p *pdf.PDF, old pdf.Reference, clones map[pdf.Reference]pdf.Reference,
+) (nr pdf.Reference, err error) {
 	if nr, ok := clones[old]; ok {
 		return nr, nil
 	}

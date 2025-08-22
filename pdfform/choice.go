@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/rothskeller/pdf/pdfstruct"
+	"github.com/rothskeller/pdf"
 )
 
 /*
@@ -33,28 +33,28 @@ Choices are encoded in the PDF as follows:
 */
 
 // setChoice sets the state of select or combo box.
-func setChoice(pdf *pdfstruct.PDF, fieldref pdfstruct.Reference, field pdfstruct.Dict, value string) (err error) {
+func setChoice(p *pdf.PDF, fieldref pdf.Reference, field pdf.Dict, value string) (err error) {
 	// Update the V in the field.
 	if v, ok := field["V"].(string); ok && v == value {
 		return nil // no change needed
 	}
 	field["V"] = value
-	pdf.UpdateObject(fieldref, field)
+	p.UpdateObject(fieldref, field)
 	// If editing is allowed — i.e., values not in the list are acceptable —
 	// we're done.
 	if field["Ff"].(int)&0x60000 != 0 {
 		return nil
 	}
 	// Make sure the value is valid.
-	var opts pdfstruct.Array
+	var opts pdf.Array
 	switch o := field["Opts"].(type) {
 	case nil:
 		return errors.New("field[Opts] is not specified")
-	case pdfstruct.Reference:
-		if opts, err = pdf.GetArray(o); err != nil {
+	case pdf.Reference:
+		if opts, err = p.GetArray(o); err != nil {
 			return fmt.Errorf("field[Opts]: %s", err)
 		}
-	case pdfstruct.Array:
+	case pdf.Array:
 		opts = o
 	default:
 		return errors.New("field[Opts] is not an Array")

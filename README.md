@@ -1,17 +1,19 @@
-# Steve’s PDF Libraries
+# Steve’s PDF Library
 
 This repository contains code for reading and writing PDF files, as needed for
 various other projects of mine.
 
-Package `pdfstruct` is the base package.  It contains methods for opening an
-existing PDF file, traversing its structure, and making updates to it.
+The top package is the library used by other programs.  The sub-packages are
+mostly utility commands based on that library.  Specifically:
 
-Package `pdffont` is a package that knows how to measure string extents in
-several standard fonts.
+- `pdfdump` is a program that dumps the entire structure of a PDF file in a
+  human-readable form.
+- `pdfinspect` is a program that dumps individual objects from the PDF file in a
+  human-readable form.
 
-Package `pdfform` is a layer on top of `pdfstruct` that particularly knows how
-to deal with interactive forms in PDF files.  It can fetch the form fields and
-their values, and update them.
+There is also a sub-package `pdfform` that knows how to read and write fillable
+forms in PDF files.  I don't have any use for it anymore so it isn't being
+maintained, but as far as I know it still works.
 
-Package `pdfinspect` is a command line tool to inspect the contents of a PDF
-file.
+The sub-package `pdftest` is just a test program used during development of the
+library.

@@ -1,4 +1,4 @@
-package pdftext
+package pdf
 
 // FontMetrics returns the maximum height above the baseline and below the
 // baseline at the specified font size.  Only ASCII characters are considered.

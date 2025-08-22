@@ -3,7 +3,7 @@ package pdfform
 import (
 	"errors"
 
-	"github.com/rothskeller/pdf/pdfstruct"
+	"github.com/rothskeller/pdf"
 )
 
 /*
@@ -32,27 +32,27 @@ Checkboxes are encoded in the PDF as follows:
 
 // setCheckbox sets the state of a set of radio buttons.  This involves
 // setting V on the parent field and /AS on each of the individual buttons.
-func setCheckbox(pdf *pdfstruct.PDF, fieldref pdfstruct.Reference, field pdfstruct.Dict, value string) (err error) {
+func setCheckbox(p *pdf.PDF, fieldref pdf.Reference, field pdf.Dict, value string) (err error) {
 	switch value {
 	case "Off":
 		switch v := field["V"].(type) {
 		case nil:
 			return nil
-		case pdfstruct.Name:
+		case pdf.Name:
 			if v == "Off" {
 				return nil
 			}
 		}
 		delete(field, "V")
-		field["AS"] = pdfstruct.Name("Off")
-		pdf.UpdateObject(fieldref, field)
+		field["AS"] = pdf.Name("Off")
+		p.UpdateObject(fieldref, field)
 	case "Yes":
-		if v, ok := field["V"].(pdfstruct.Name); ok && v == "Yes" {
+		if v, ok := field["V"].(pdf.Name); ok && v == "Yes" {
 			return nil
 		}
-		field["V"] = pdfstruct.Name("Yes")
-		field["AS"] = pdfstruct.Name("Yes")
-		pdf.UpdateObject(fieldref, field)
+		field["V"] = pdf.Name("Yes")
+		field["AS"] = pdf.Name("Yes")
+		p.UpdateObject(fieldref, field)
 	default:
 		return errors.New("value is not valid for field")
 	}

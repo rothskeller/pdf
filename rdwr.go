@@ -1,6 +1,9 @@
-package pdfstruct
+package pdf
+
+// This file contains the code that knows how to read and write PDF files.
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
@@ -9,28 +12,75 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"time"
 )
 
-// UpdateObject registers new content for the object with the specified
-// reference.  The new content will be written if Write is called.
-func (p *PDF) UpdateObject(ref Reference, obj Object) {
-	if p.updates == nil {
-		p.updates = make(map[Reference]Object)
-	}
-	p.updates[ref] = obj
-	p.xref[ref.Number] = obj
+// pdfHeader is the header to start a new PDF file.  The four hex bytes don't
+// have any specific meaning; the spec just calls for four bytes with high bit
+// set.
+var pdfHeader = []byte("%PDF-1.5\r\n%\xE2\xE3\xCF\xD3\r\n")
+
+// Writer is the interface that must be satisfied by any file passed to New.
+type Writer interface {
+	io.Seeker
+	io.ReaderAt
+	io.WriterAt
 }
 
-// CreateObject creates a new object with the specified content, and returns a
-// reference to it.  The new content will be written if Write is called.
-func (p *PDF) CreateObject(obj Object) (ref Reference) {
-	if p.updates == nil {
-		p.updates = make(map[Reference]Object)
+// New creates a new PDF file.  After objects are added to it, Write must be
+// called on it.
+func New(fh Writer) (pdf *PDF) {
+	var now = strings.Replace(time.Now().Format("20060102150405Z07:00"), ":", "'", 1)
+
+	pdf = &PDF{
+		fh: fh,
+		Info: Dict{
+			"CreationTime": "D: " + now,
+			"ModTime":      "D: " + now,
+			"Producer":     "https://github.com/rothskeller/pdf",
+		},
+		Catalog: Dict{},
+		Trailer: Dict{},
 	}
-	ref.Number = len(p.xref)
-	p.xref = append(p.xref, obj)
-	p.updates[ref] = obj
-	return ref
+	pdf.Trailer["Info"] = pdf.CreateObject(pdf.Info)
+	pdf.Catalog["Type"] = Name("Catalog")
+	pdf.Catalog["Pages"] = pdf.CreateObject(Dict{
+		"Type": Name("Pages"), "Kids": Array{}, "Count": 0,
+	})
+	pdf.Trailer["Root"] = pdf.CreateObject(pdf.Catalog)
+	return pdf
+}
+
+// Reader is the interface that must be satisfied by any file passed to Open.
+type Reader interface {
+	io.Seeker
+	io.ReaderAt
+}
+
+// Open opens an existing PDF file.
+func Open(fh Reader) (p *PDF, err error) {
+	p = &PDF{fh: fh, Info: make(Dict), Trailer: make(Dict)}
+	if err = p.verifySignature(); err != nil {
+		return nil, err
+	}
+	if err = p.readXRef(); err != nil {
+		return nil, err
+	}
+	if p.Catalog, err = p.GetDict(p.Trailer["Root"]); err != nil {
+		return nil, fmt.Errorf("/Root: %w", err)
+	}
+	return p, nil
+}
+
+func (p *PDF) verifySignature() (err error) {
+	var buf [5]byte
+	if _, err = p.fh.ReadAt(buf[:], 0); err != nil {
+		return fmt.Errorf("verify signature: %s", err)
+	}
+	if !bytes.Equal(buf[:], []byte("%PDF-")) {
+		return errors.New("not a PDF file")
+	}
+	return nil
 }
 
 // Write updates the PDF in place to save the updated objects previously passed
@@ -54,6 +104,12 @@ func (p *PDF) Write() (err error) {
 	}
 	if offset, err = wr.Seek(0, io.SeekEnd); err != nil {
 		return err
+	}
+	if offset == 0 {
+		// This is a new file.  Add a header.
+		if _, err = wr.Write(pdfHeader); err != nil {
+			return err
+		}
 	}
 	for u := range p.updates {
 		updates = append(updates, u)
@@ -108,11 +164,11 @@ func writeRawObject(wr io.Writer, obj Object) (err error) {
 	case float64:
 		_, err = fmt.Fprintf(wr, "%f", obj)
 	case string:
-		_, err = fmt.Fprint(wr, encodeString(obj))
+		_, err = fmt.Fprint(wr, EncodeString(obj))
 	case []byte:
-		_, err = fmt.Fprint(wr, encodeHexString(obj))
+		_, err = fmt.Fprint(wr, EncodeHexString(obj))
 	case Name:
-		_, err = fmt.Fprint(wr, encodeName(obj))
+		_, err = fmt.Fprint(wr, EncodeName(obj))
 	case Array:
 		if _, err = fmt.Fprint(wr, "[ "); err != nil {
 			return err
@@ -133,7 +189,7 @@ func writeRawObject(wr io.Writer, obj Object) (err error) {
 			return err
 		}
 		for k, v := range obj {
-			if _, err = fmt.Fprintf(wr, " %s ", encodeName(k)); err != nil {
+			if _, err = fmt.Fprintf(wr, " %s ", EncodeName(k)); err != nil {
 				return err
 			}
 			if err = writeRawObject(wr, v); err != nil {
@@ -147,7 +203,7 @@ func writeRawObject(wr io.Writer, obj Object) (err error) {
 			return err
 		}
 		for k, v := range obj.Dict {
-			if _, err = fmt.Fprintf(wr, " %s ", encodeName(k)); err != nil {
+			if _, err = fmt.Fprintf(wr, " %s ", EncodeName(k)); err != nil {
 				return err
 			}
 			if err = writeRawObject(wr, v); err != nil {
@@ -171,7 +227,7 @@ func writeRawObject(wr io.Writer, obj Object) (err error) {
 
 func writeXRefDict(p *PDF, wr io.Writer, prev int, refs []Reference) (xdnum int, err error) {
 	var xd = make(Dict)
-	for k, v := range p.Info {
+	for k, v := range p.Trailer {
 		xd[k] = v
 	}
 	if a, ok := xd["ID"].(Array); ok {
@@ -181,7 +237,9 @@ func writeXRefDict(p *PDF, wr io.Writer, prev int, refs []Reference) (xdnum int,
 			a[1] = id2[:]
 		}
 	}
-	xd["Prev"] = prev
+	if prev != 0 {
+		xd["Prev"] = prev
+	}
 	xd["Length"] = 6 * (len(refs) + 1)
 	xd["Type"] = Name("XRef")
 	xdnum = len(p.xref)
@@ -221,7 +279,7 @@ func writeStartXRef(wr io.Writer, start int) (err error) {
 	return err
 }
 
-func encodeString(s string) string {
+func EncodeString(s string) string {
 	var sb strings.Builder
 	var by = []byte(s)
 	sb.WriteByte('(')
@@ -241,11 +299,11 @@ func encodeString(s string) string {
 	return sb.String()
 }
 
-func encodeHexString(by []byte) string {
+func EncodeHexString(by []byte) string {
 	return "<" + hex.EncodeToString(by) + ">"
 }
 
-func encodeName(n Name) string {
+func EncodeName(n Name) string {
 	var by = []byte(string(n))
 	var sb strings.Builder
 	sb.WriteByte('/')
