@@ -20,20 +20,13 @@ import (
 // set.
 var pdfHeader = []byte("%PDF-1.5\r\n%\xE2\xE3\xCF\xD3\r\n")
 
-// Writer is the interface that must be satisfied by any file passed to New.
-type Writer interface {
-	io.Seeker
-	io.ReaderAt
-	io.WriterAt
-}
-
 // New creates a new PDF file.  After objects are added to it, Write must be
 // called on it.
-func New(fh Writer) (pdf *PDF) {
+func New(wh io.WriteSeeker) (pdf *PDF) {
 	var now = strings.Replace(time.Now().Format("20060102150405Z07:00"), ":", "'", 1)
 
 	pdf = &PDF{
-		fh: fh,
+		wh: wh,
 		Info: Dict{
 			"CreationTime": "D: " + now,
 			"ModTime":      "D: " + now,
@@ -59,7 +52,8 @@ type Reader interface {
 
 // Open opens an existing PDF file.
 func Open(fh Reader) (p *PDF, err error) {
-	p = &PDF{fh: fh, Info: make(Dict), Trailer: make(Dict)}
+	p = &PDF{rh: fh, Info: make(Dict), Trailer: make(Dict)}
+	p.wh, _ = fh.(io.WriteSeeker)
 	if err = p.verifySignature(); err != nil {
 		return nil, err
 	}
@@ -74,7 +68,7 @@ func Open(fh Reader) (p *PDF, err error) {
 
 func (p *PDF) verifySignature() (err error) {
 	var buf [5]byte
-	if _, err = p.fh.ReadAt(buf[:], 0); err != nil {
+	if _, err = p.rh.ReadAt(buf[:], 0); err != nil {
 		return fmt.Errorf("verify signature: %s", err)
 	}
 	if !bytes.Equal(buf[:], []byte("%PDF-")) {
@@ -84,11 +78,11 @@ func (p *PDF) verifySignature() (err error) {
 }
 
 // Write updates the PDF in place to save the updated objects previously passed
-// to UpdateObject.  For this to work, the file handle passed to Open must
-// support io.WriteSeeker.  The caller needs to close the file when finished.
+// to UpdateObject.  For this to work, the receiver must have been created by
+// New, or by Open with a file handle that supports io.WriteSeeker.  The caller
+// needs to close the file when finished.
 func (p *PDF) Write() (err error) {
 	var (
-		wr      io.WriteSeeker
 		offset  int64
 		xref    int64
 		updates = make([]Reference, 0, len(p.updates))
@@ -97,17 +91,15 @@ func (p *PDF) Write() (err error) {
 	if len(p.updates) == 0 {
 		return nil
 	}
-	if w, ok := p.fh.(io.WriteSeeker); ok {
-		wr = w
-	} else {
+	if p.wh == nil {
 		return errors.New("file handle not writable")
 	}
-	if offset, err = wr.Seek(0, io.SeekEnd); err != nil {
+	if offset, err = p.wh.Seek(0, io.SeekEnd); err != nil {
 		return err
 	}
 	if offset == 0 {
 		// This is a new file.  Add a header.
-		if _, err = wr.Write(pdfHeader); err != nil {
+		if _, err = p.wh.Write(pdfHeader); err != nil {
 			return err
 		}
 	}
@@ -119,24 +111,24 @@ func (p *PDF) Write() (err error) {
 	})
 	for i, ref := range updates {
 		offsets[i] = int(offset)
-		if err = writeObject(wr, ref, p.updates[ref]); err != nil {
+		if err = writeObject(p.wh, ref, p.updates[ref]); err != nil {
 			return err
 		}
-		if offset, err = wr.Seek(0, io.SeekCurrent); err != nil {
+		if offset, err = p.wh.Seek(0, io.SeekCurrent); err != nil {
 			return err
 		}
 	}
 	xref = offset
 	var xdnum int
-	if xdnum, err = writeXRefDict(p, wr, p.start, updates); err != nil {
+	if xdnum, err = writeXRefDict(p, p.wh, p.start, updates); err != nil {
 		return err
 	}
 	updates = append(updates, Reference{Number: xdnum})
 	offsets = append(offsets, int(xref))
-	if err = writeXRefStream(wr, updates, offsets); err != nil {
+	if err = writeXRefStream(p.wh, updates, offsets); err != nil {
 		return err
 	}
-	if err = writeStartXRef(wr, int(xref)); err != nil {
+	if err = writeStartXRef(p.wh, int(xref)); err != nil {
 		return err
 	}
 	return nil

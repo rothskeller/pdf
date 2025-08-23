@@ -62,10 +62,10 @@ func (p *PDF) readStartXRef() (err error) {
 		buf   [64]byte
 		match [][]byte
 	)
-	if end, err = p.fh.Seek(0, io.SeekEnd); err != nil {
+	if end, err = p.rh.Seek(0, io.SeekEnd); err != nil {
 		return err
 	}
-	if _, err = p.fh.ReadAt(buf[:], end-int64(len(buf))); err != nil {
+	if _, err = p.rh.ReadAt(buf[:], end-int64(len(buf))); err != nil {
 		return err
 	}
 	if match = xrefAddrRE.FindSubmatch(buf[:]); match == nil {
@@ -88,7 +88,7 @@ func (p *PDF) readXRefSection(addr int) (prev int, err error) {
 	// There are two different kinds of cross-reference section: tables and
 	// streams.  Tables start with the word "xref", so look to see if
 	// that's present.
-	if n, err = p.fh.ReadAt(buf[:], int64(addr)); err != nil || n < 5 {
+	if n, err = p.rh.ReadAt(buf[:], int64(addr)); err != nil || n < 5 {
 		return
 	}
 	if bytes.Equal(buf[:4], []byte("xref")) && (buf[4] == '\r' || buf[4] == '\n') {
@@ -106,7 +106,7 @@ func (p *PDF) readXRefTable(addr int) (prev int, err error) {
 		obj Object
 	)
 	// Skip the "xref" line.
-	if _, err = p.fh.ReadAt(buf[:6], int64(addr)); err != nil {
+	if _, err = p.rh.ReadAt(buf[:6], int64(addr)); err != nil {
 		return 0, err
 	}
 	if buf[4] == '\r' && buf[5] == '\n' {
@@ -116,7 +116,7 @@ func (p *PDF) readXRefTable(addr int) (prev int, err error) {
 	}
 	// Repeat reading xref table sections until we see "trailer".
 	for {
-		if _, err = p.fh.ReadAt(buf[:], int64(addr)); err != nil {
+		if _, err = p.rh.ReadAt(buf[:], int64(addr)); err != nil {
 			return 0, err
 		}
 		if bytes.HasPrefix(buf[:], []byte("trailer")) && (buf[7] == '\r' || buf[7] == '\n') {
@@ -203,7 +203,7 @@ func (p *PDF) readXRefTableSection(addr int, line []byte) (_ int, err error) {
 		if p.xref[start+i] != nil {
 			continue
 		}
-		if _, err = p.fh.ReadAt(line, int64(addr)); err != nil {
+		if _, err = p.rh.ReadAt(line, int64(addr)); err != nil {
 			return 0, fmt.Errorf("reading cross-reference table entry at offset %d: %s", addr, err)
 		}
 		switch line[17] {

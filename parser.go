@@ -20,7 +20,7 @@ func (p *PDF) readObjectAt(addr int) (obj Object, err error) {
 		ptr   = addr
 	)
 	if _, _, obj, err = readObject(addr, nil, func(by []byte) (_ []byte, err error) {
-		if count, err = p.fh.ReadAt(buf[:], int64(ptr)); err != nil && (err != io.EOF || count == 0) {
+		if count, err = p.rh.ReadAt(buf[:], int64(ptr)); err != nil && (err != io.EOF || count == 0) {
 			return nil, err
 		}
 		ptr += count

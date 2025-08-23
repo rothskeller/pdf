@@ -1,6 +1,8 @@
 // Package pdf provides methods for reading, creating, and updating PDF files.
 package pdf
 
+import "io"
+
 // An Object is an object as defined by the PDF specification.  While an Object
 // is defined as "any", it will in fact be one of the following:
 //   - nil (a null object)
@@ -41,7 +43,8 @@ type Reference struct {
 
 // A PDF is a reference to a PDF file.
 type PDF struct {
-	fh      Reader
+	rh      Reader
+	wh      io.WriteSeeker
 	start   int
 	xref    []any
 	Info    Dict
