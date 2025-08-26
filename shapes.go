@@ -14,6 +14,68 @@ import (
 // https://stackoverflow.com/questions/1734745/how-to-create-circle-with-b%C3%A9zier-curves
 const circleControlPointDistance = 0.552284749831
 
+// Line is a structure containing all of the parameters for drawing a line.  To
+// draw a line, create a Line structure and call its Draw method.
+type Line struct {
+	// P1 and P2 give the endpoints of the line.  Required.
+	P1, P2 Point
+	// Page gives the page number to draw on.  Default is 1.
+	Page int
+	// Stroke gives the stroke color for the line, as an array of three or
+	// four bytes (R, G, B, and maybe A).  Default is solid black.
+	Stroke []byte
+	// Width gives the line width.  Default is 1pt.
+	Width float64
+}
+
+func (b Line) Draw(pdf *PDF) (err error) {
+	var (
+		c      *Cursor
+		gstate Name
+		sb     strings.Builder
+	)
+	// Check parameters.
+	if b.Page == 0 {
+		b.Page = 1
+	} else if b.Page < 0 {
+		return errors.New("invalid Page")
+	}
+	if len(b.Stroke) != 0 && len(b.Stroke) != 3 && len(b.Stroke) != 4 {
+		return errors.New("invalid Stroke")
+	}
+	if len(b.Stroke) == 4 && b.Stroke[3] == 0 {
+		return nil // alpha=0 is the same as no stroke
+	}
+	if len(b.Stroke) == 0 {
+		b.Stroke = []byte{0, 0, 0, 255}
+	}
+	if len(b.Stroke) == 3 {
+		b.Stroke = append(b.Stroke, 255)
+	}
+	if b.Width == 0 {
+		b.Width = 1.0
+	}
+	// Get the page cursor.
+	if c, err = pdf.CursorForPage(b.Page); err != nil {
+		return err
+	}
+	// Create the alpha graphic state if needed.
+	if gstate, err = maybeAddAlpha(c, nil, b.Stroke); err != nil {
+		return err
+	}
+	// Draw the box.
+	sb.WriteString("q")
+	if gstate != "" {
+		fmt.Fprintf(&sb, " %s gs", EncodeName(gstate))
+	}
+	fmt.Fprintf(&sb, " %.2f %.2f %.2f RG %2.f w",
+		float64(b.Stroke[0])/255, float64(b.Stroke[1])/255, float64(b.Stroke[2])/255, b.Width)
+	fmt.Fprintf(&sb, " %.2f %.2f m %.2f %.2f l h s",
+		b.P1.X, b.P1.Y, b.P2.X, b.P2.Y)
+	sb.WriteString(" Q")
+	return pdf.AddPageContent(b.Page, sb.String())
+}
+
 // Box is a structure containing all of the parameters for drawing a box.  To
 // draw a box, create a Box structure and call its Draw method.
 type Box struct {
