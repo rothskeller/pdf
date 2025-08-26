@@ -87,10 +87,10 @@ func markField(c *pdf.Cursor, out *pdf.PDF) (err error) {
 func markRect(rect pdf.Array, out *pdf.PDF) (err error) {
 	var x, y, r, t float64
 
-	x = rect[0].(float64)
-	y = rect[1].(float64)
-	r = rect[2].(float64)
-	t = rect[3].(float64)
+	x = toFloat64(rect[0])
+	y = toFloat64(rect[1])
+	r = toFloat64(rect[2])
+	t = toFloat64(rect[3])
 	boxno++
 	fmt.Printf("Box %2d: L %6.2f R %6.2f B %6.2f T %6.2f  //  X %6.2f Y %6.2f R %4.2f\n",
 		boxno, x, r, y, t, (x+r)/2, (y+t)/2, (r-x)/2)
@@ -109,4 +109,15 @@ func markRect(rect pdf.Array, out *pdf.PDF) (err error) {
 		return err
 	}
 	return nil
+}
+
+func toFloat64(n pdf.Object) float64 {
+	switch n := n.(type) {
+	case float64:
+		return n
+	case int:
+		return float64(n)
+	default:
+		panic("wrong number type")
+	}
 }
