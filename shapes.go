@@ -141,10 +141,10 @@ func (b Box) Draw(pdf *PDF) (err error) {
 		fmt.Fprintf(&sb, " %s gs", EncodeName(gstate))
 	}
 	if len(b.Fill) != 0 {
-		fmt.Fprintf(&sb, " %d %d %d rg", b.Fill[0], b.Fill[1], b.Fill[2])
+		fmt.Fprintf(&sb, " %.2f %.2f %.2f rg", float64(b.Fill[0])/255, float64(b.Fill[1])/255, float64(b.Fill[2])/255)
 	}
 	if len(b.Stroke) != 0 {
-		fmt.Fprintf(&sb, " %d %d %d RG", b.Stroke[0], b.Stroke[1], b.Stroke[2])
+		fmt.Fprintf(&sb, " %.2f %.2f %.2f RG", float64(b.Stroke[0])/255, float64(b.Stroke[1])/255, float64(b.Stroke[2])/255)
 	}
 	fmt.Fprintf(&sb, " %.2f %.2f %.2f %.2f re",
 		b.Rectangle.LLX, b.Rectangle.LLY,
@@ -220,10 +220,10 @@ func (b Cross) Draw(pdf *PDF) (err error) {
 	if gstate != "" {
 		fmt.Fprintf(&sb, " %s gs", EncodeName(gstate))
 	}
-	fmt.Fprintf(&sb, " %.2f %.2f %.2f %.2f re W n %d %d %d RG 0 J %.2f w %.2f %.2f m %.2f %.2f l %.2f %.2f m %.2f %.2f l s Q",
+	fmt.Fprintf(&sb, " %.2f %.2f %.2f %.2f re W n %.2f %.2f %.2f RG 0 J %.2f w %.2f %.2f m %.2f %.2f l %.2f %.2f m %.2f %.2f l s Q",
 		b.Rectangle.LLX, b.Rectangle.LLY,
 		b.Rectangle.URX-b.Rectangle.LLX, b.Rectangle.URY-b.Rectangle.LLY,
-		b.Stroke[0], b.Stroke[1], b.Stroke[2], b.LineWidth,
+		float64(b.Stroke[0])/255, float64(b.Stroke[1])/255, float64(b.Stroke[2])/255, b.LineWidth,
 		b.Rectangle.LLX, b.Rectangle.LLY,
 		b.Rectangle.URX, b.Rectangle.URY,
 		b.Rectangle.URX, b.Rectangle.LLY,
@@ -298,10 +298,10 @@ func (b Circle) Draw(pdf *PDF) (err error) {
 		fmt.Fprintf(&sb, " %s gs", EncodeName(gstate))
 	}
 	if len(b.Fill) != 0 {
-		fmt.Fprintf(&sb, " %d %d %d rg", b.Fill[0], b.Fill[1], b.Fill[2])
+		fmt.Fprintf(&sb, " %.2f %.2f %.2f rg", float64(b.Fill[0])/255, float64(b.Fill[1])/255, float64(b.Fill[2])/255)
 	}
 	if len(b.Stroke) != 0 {
-		fmt.Fprintf(&sb, " %d %d %d RG", b.Stroke[0], b.Stroke[1], b.Stroke[2])
+		fmt.Fprintf(&sb, " %.2f %.2f %.2f RG", float64(b.Stroke[0])/255, float64(b.Stroke[1])/255, float64(b.Stroke[2])/255)
 	}
 	fmt.Fprintf(&sb, " %.2f %.2f m", b.Center.X-b.Radius, b.Center.Y)
 	fmt.Fprintf(&sb, " %.2f %.2f %.2f %.2f %.2f %.2f c",
