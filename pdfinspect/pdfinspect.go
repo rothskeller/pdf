@@ -45,7 +45,7 @@ func main() {
 		os.Exit(1)
 	}
 	if objid, err := strconv.Atoi(os.Args[2]); err == nil {
-		if obj, err := p.Get(pdf.Reference{Number: objid}); err != nil {
+		if obj, err := p.Fetch(pdf.Reference{Number: objid}); err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: %d: %s\n", objid, err)
 			os.Exit(1)
 		} else {
@@ -70,7 +70,7 @@ func find(p *pdf.PDF, root pdf.Object, prefix string, path []string) {
 		return
 	}
 	if ref, ok := root.(pdf.Reference); ok {
-		if root, err = p.Get(ref); err != nil {
+		if root, err = p.Fetch(ref); err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: %s: (#%d,%d): %s\n", prefix, ref.Number, ref.Generation, err)
 			os.Exit(1)
 		}
@@ -121,7 +121,7 @@ func find(p *pdf.PDF, root pdf.Object, prefix string, path []string) {
 func dump(p *pdf.PDF, obj pdf.Object, path string, indent int) {
 	if ref, ok := obj.(pdf.Reference); ok && indent == 0 {
 		var err error
-		if obj, err = p.Get(ref); err != nil {
+		if obj, err = p.Fetch(ref); err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: %s: (#%d,%d): %s\n", path, ref.Number, ref.Generation, err)
 			os.Exit(1)
 		}

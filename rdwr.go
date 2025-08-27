@@ -60,8 +60,12 @@ func Open(fh Reader) (p *PDF, err error) {
 	if err = p.readXRef(); err != nil {
 		return nil, err
 	}
-	if p.Catalog, err = p.GetDict(p.Trailer["Root"]); err != nil {
-		return nil, fmt.Errorf("/Root: %w", err)
+	if obj, err := p.Fetch(p.Trailer["Root"].(Reference)); err != nil {
+		return nil, err
+	} else if _, ok := obj.(Dict); !ok {
+		return nil, fmt.Errorf("/Root is %T, not Dict", obj)
+	} else {
+		p.Catalog = obj.(Dict)
 	}
 	return p, nil
 }
@@ -300,7 +304,7 @@ func EncodeName(n Name) string {
 	var sb strings.Builder
 	sb.WriteByte('/')
 	for _, b := range by {
-		if isRegularChar(b) {
+		if isRegularChar(b) && b != '#' {
 			sb.WriteByte(b)
 		} else {
 			fmt.Fprintf(&sb, "#%2X", b)

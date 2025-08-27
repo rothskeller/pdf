@@ -11,9 +11,9 @@ mostly utility commands based on that library.  Specifically:
 - `pdfinspect` is a program that dumps individual objects from the PDF file in a
   human-readable form.
 
-There is also a sub-package `pdfform` that knows how to read and write fillable
-forms in PDF files.  I don't have any use for it anymore so it isn't being
-maintained, but as far as I know it still works.
+There is also a directory `_pdfform`, with code for a deprecated package that
+knows how to read and write fillable forms in PDF files.  It's out of date and
+no longer used, but saved in case I need it someday.
 
 The sub-package `pdftest` is just a test program used during development of the
 library.

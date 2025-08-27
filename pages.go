@@ -5,19 +5,73 @@ import (
 	"iter"
 )
 
+// NumPages returns the number of pages in the PDF.
+func (pdf *PDF) NumPages() (count int, err error) {
+	_, _ = pdf.PagePath(1) // make sure page paths are cached
+	return len(pdf.pages), nil
+}
+
+// AddPage adds a page to the PDF, with the specified dimensions.
+func (pdf *PDF) AddPage(mediaBox Rectangle) (err error) {
+	var (
+		page    Dict
+		pageref Reference
+	)
+	_, _ = pdf.PagePath(1) // make sure page paths are cached
+	page = Dict{
+		"Type":   Name("Page"),
+		"Parent": pdf.Catalog["Pages"],
+		"Resources": Dict{"ProcSet": Array{
+			Name("PDF"),
+			Name("Text"),
+			Name("ImageB"),
+			Name("ImageC"),
+			Name("ImageI"),
+		}},
+		"MediaBox": mediaBox.toArray(),
+	}
+	pageref = pdf.CreateObject(page)
+	if err = pdf.Append("/Root/Pages/Kids", pageref); err != nil {
+		return err
+	}
+	if arr, err := pdf.GetArray("/Root/Pages/Kids"); err != nil {
+		return err
+	} else {
+		pdf.pages = append(pdf.pages, Path(fmt.Sprintf("/Root/Pages/Kids/%d", len(arr)-1)))
+	}
+	if err = pdf.Set("/Root/Pages/Count", len(pdf.pages)); err != nil {
+		return err
+	}
+	return nil
+}
+
+// PagePath returns the path to the page dictionary for the specified page
+// number (starting from 1).
+func (pdf *PDF) PagePath(pagenum int) (p Path, err error) {
+	if pdf.pages == nil {
+		for _, p := range pdf.pagePaths() {
+			pdf.pages = append(pdf.pages, p)
+		}
+	}
+	if pagenum < 1 || pagenum > len(pdf.pages) {
+		return "", fmt.Errorf("no such page %d", pagenum)
+	}
+	return pdf.pages[pagenum-1], nil
+}
+
 // PagePaths returns an iterator of paths to the page dicts in the PDF.
-func (pdf *PDF) PagePaths() iter.Seq2[int, string] {
+func (pdf *PDF) pagePaths() iter.Seq2[int, Path] {
 	var pagenum int
 
-	return func(yield func(int, string) bool) {
-		pdf.everyPage("/Root/Pages", func(pagepath string) bool {
+	return func(yield func(int, Path) bool) {
+		pdf.everyPage("/Root/Pages", func(pagepath Path) bool {
 			pagenum++
 			return yield(pagenum, pagepath)
 		})
 	}
 }
-func (pdf *PDF) everyPage(root string, f func(string) bool) bool {
-	var dict, err = pdf.PGetDict(root)
+func (pdf *PDF) everyPage(root Path, f func(Path) bool) bool {
+	var dict, err = pdf.GetDict(root)
 	if err != nil {
 		return true
 	}
@@ -25,8 +79,8 @@ func (pdf *PDF) everyPage(root string, f func(string) bool) bool {
 	case Name("Page"):
 		return f(root)
 	case Name("Pages"):
-		var path = PathKey(root, "Kids")
-		var kids, err = pdf.PGetArray(path)
+		var path = root.K("Kids")
+		var kids, err = pdf.GetArray(path)
 		if err != nil {
 			return true
 		}
@@ -38,71 +92,5 @@ func (pdf *PDF) everyPage(root string, f func(string) bool) bool {
 		return true
 	default:
 		return true
-	}
-}
-
-// Pages returns an iterator that yields (page number, cursor pointing to page
-// dictionary) for all pages in the PDF in proper sequence.  Once yielded, each
-// cursor is discarded, so the calling code can use it however it will.  If an
-// error occurs, the final yielded cursor will be in an error state.
-func (pdf *PDF) Pages() iter.Seq2[int, *Cursor] {
-	return func(yield func(int, *Cursor) bool) {
-		type pagesArray struct {
-			pages  Array
-			index  int
-			cursor *Cursor
-		}
-		var (
-			parrays []*pagesArray
-			c       *Cursor
-			parray  *pagesArray
-			err     error
-			pagenum = 1
-		)
-		c = pdf.Cursor().Key("Root").Key("Pages").Key("Kids")
-		parray = new(pagesArray)
-		if parray.pages, err = c.Array(); err != nil {
-			c.SetError(err)
-			yield(pagenum, c)
-			return
-		}
-		parray.cursor = c
-		parrays = append(parrays, parray)
-		for len(parrays) != 0 {
-			var dict Dict
-
-			parray = parrays[len(parrays)-1]
-			if parray.index >= len(parray.pages) {
-				parrays = parrays[:len(parrays)-1]
-				continue
-			}
-			c = parray.cursor.Clone().Index(parray.index)
-			parray.index++
-			if dict, err = c.Dict(); err != nil {
-				c.SetError(err)
-				yield(pagenum, c)
-				return
-			}
-			switch dict["Type"] {
-			case Name("Pages"):
-				parray = new(pagesArray)
-				if parray.pages, err = c.Key("Kids").Array(); err != nil {
-					c.SetError(err)
-					yield(pagenum, c)
-					return
-				}
-				parray.cursor = c
-				parrays = append(parrays, parray)
-			case Name("Page"):
-				if !yield(pagenum, c) {
-					return
-				}
-				pagenum++
-			default:
-				c.SetError(fmt.Errorf("%s/Type: not /Pages or /Page", c.Path()))
-				yield(pagenum, c)
-				return
-			}
-		}
 	}
 }

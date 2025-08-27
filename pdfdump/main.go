@@ -48,7 +48,7 @@ func main() {
 	for _, ref := range reflist {
 		var obj pdf.Object
 
-		if obj, err = p.Get(ref); err != nil {
+		if obj, err = p.Fetch(ref); err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: %s: %s\n", os.Args[1], err)
 			os.Exit(1)
 		}
@@ -65,7 +65,7 @@ func getAllRefs(p *pdf.PDF, refs map[pdf.Reference]struct{}, obj pdf.Object) (er
 		}
 		refs[obj] = struct{}{}
 		var reffed pdf.Object
-		if reffed, err = p.Get(obj); err != nil {
+		if reffed, err = p.Fetch(obj); err != nil {
 			return err
 		}
 		return getAllRefs(p, refs, reffed)

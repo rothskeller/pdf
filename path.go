@@ -1,313 +1,384 @@
 package pdf
 
 import (
+	"encoding/hex"
 	"fmt"
 	"iter"
+	"regexp"
 	"strconv"
 	"strings"
 )
 
-// PGet returns the object at the specified path.  A path is a filesystem-like
-// path where "/" is the trailer dictionary and a relative path is interpreted
-// related to "/Root".  Each element of the path corresponds to a key into a
-// Dict or an index into an Array; in the latter case the path element must
-// be an integer >= 0.  If the file structure isn't consistent with the path,
-// an error is returned.  If the last element of the path doesn't exist, a nil
-// object is returned with no error.
-func (pdf *PDF) PGet(path string) (object Object, err error) {
-	object, _, _, err = pdf.pget(path, true)
-	return object, err
+// A Path represents a path to an object in a PDF, navigating from the PDF's
+// trailer dictionary.  It looks like a file system path, with "/" representing
+// the trailer dictionary and subsequent components of the path being either
+// Dict keys, Stream.Dict keys, or Array indices.  So, for example,
+// /Root/Pages/Kids/0/Content might be the path to the content stream of the
+// first page of the PDF.  Indirect object references are not represented in the
+// path.
+type Path string
+
+// K adds a Dict or Stream.Dict key to the path.
+func (p Path) K(n Name) Path { return p + Path(EncodeName(n)) }
+
+// I adds an Array index to the path.
+func (p Path) I(i int) Path { return p + "/" + Path(strconv.Itoa(i)) }
+
+// Get returns the object at the specified Path.  If the file structure isn't
+// consistent with the path, the object returned is an error.
+func (pdf *PDF) Get(p Path) (object Object) {
+	if object, _, _, err := pdf.pget(p, true); err != nil {
+		return err
+	} else {
+		return object
+	}
 }
-func (pdf *PDF) pget(path string, derefLast bool) (object, lastTgt Object, lastRef Reference, err error) {
+
+// pget returns the object at the specified Path.  If that object is a
+// Reference, derefLast indicates whether to return the Reference itself (false)
+// or the object addressed by that Reference (true).  The returned lastRef and
+// lastTgt indicate the last Reference followed while traversing the path and
+// the object that it addressed.
+func (pdf *PDF) pget(p Path, derefLast bool) (object, lastTgt Object, lastRef Reference, err error) {
 	var (
-		loc   Object
-		epath string
-		elms  []string
-		last  string
+		epath string   // the path traversed so far (for error messages)
+		elms  []string // the elements of the path, except the last
+		last  string   // the last element of the path
 	)
-	if path == "" || (path != "/" && strings.HasSuffix(path, "/")) || strings.Contains(path, "//") {
-		err = fmt.Errorf("%q: invalid path", path)
+	// Handle special cases.
+	if p == "/" {
+		return pdf.Catalog, pdf.Catalog, pdf.Trailer["Root"].(Reference), nil
+	}
+	if !strings.HasPrefix(string(p), "/") || strings.HasSuffix(string(p), "/") || strings.Contains(string(p), "//") {
+		err = fmt.Errorf("%q: invalid path", p)
 		return
 	}
-	if strings.HasPrefix(path, "/") {
-		loc = pdf.Trailer
-		path = path[1:]
-		epath = "/"
-	} else {
-		loc = pdf.Catalog
-		epath = "/Root"
-		lastTgt, lastRef = loc, pdf.Trailer["Root"].(Reference)
-	}
-	if path == "" {
-		return loc, lastTgt, lastRef, nil
-	}
-	elms = strings.Split(path, "/")
+	// Start at the trailer dictionary.
+	object = pdf.Trailer
+	epath = "/"
+	// Split the path up into elements, keeping the last one separate.
+	elms = strings.Split(string(p[1:]), "/")
 	elms, last = elms[:len(elms)-1], elms[len(elms)-1]
+	// Walk through the non-last elements, one at a time.
 	for _, elm := range elms {
-		switch loct := loc.(type) {
+		switch objectt := object.(type) {
 		case Dict:
-			if o, ok := loct[Name(elm)]; !ok {
+			// If the current object is a Dict, the current path
+			// element must be a Name defined in that Dict.
+			if o, ok := objectt[decodeName(elm)]; !ok {
 				err = fmt.Errorf("%s/%s does not exist", epath, elm)
 				return
 			} else {
-				loc = o
+				object = o
 			}
 		case Stream:
-			if o, ok := loct.Dict[Name(elm)]; !ok {
+			// If the current object is a Stream, the current path
+			// element must be a Name defined in the Stream's Dict.
+			if o, ok := objectt.Dict[decodeName(elm)]; !ok {
 				err = fmt.Errorf("%s/%s does not exist", epath, elm)
 				return
 			} else {
-				loc = o
+				object = o
 			}
 		case Array:
+			// If the current object is an Array, the current path
+			// element must be an integer within the Array bounds.
 			if i, err2 := strconv.Atoi(elm); err2 != nil || i < 0 {
 				err = fmt.Errorf("%s is an Array and %s is not a valid index", epath, elm)
 				return
-			} else if i >= len(loct) {
+			} else if i >= len(objectt) {
 				err = fmt.Errorf("%s/%s does not exist (index out of range)", epath, elm)
 				return
 			} else {
-				loc = loct[i]
+				object = objectt[i]
 			}
 		default:
 			err = fmt.Errorf("%s/%s is not an Array, Dict, or Stream", epath, elm)
 			return
 		}
+		// The current path element was valid and has been traversed.
+		// Add it to the error path.
 		epath += "/" + elm
-		if ref, ok := loc.(Reference); ok {
-			if loc, err = pdf.Get(ref); err != nil {
+		// The current object, that we just moved to, might be a
+		// Reference.  If so, dereference it, and note it as the last
+		// Reference followed.
+		if ref, ok := object.(Reference); ok {
+			if object, err = pdf.Fetch(ref); err != nil {
 				err = fmt.Errorf("%s is a dangling reference", epath)
 				return
 			}
-			lastTgt, lastRef = loc, ref
+			lastTgt, lastRef = object, ref
 		}
 	}
-	switch loct := loc.(type) {
+	// Now handle the last element in the path.
+	switch objectt := object.(type) {
 	case Dict:
-		loc = loct[Name(last)]
+		// If the current object is a Dict, the last path element is
+		// treated as a Name in that Dict.  If the Name is not defined
+		// in that Dict, we get a nil.
+		object = objectt[decodeName(last)]
 	case Stream:
-		loc = loct.Dict[Name(last)]
+		// If the current object is a Stream, the last path element is
+		// treated as a Name in that Stream's Dict.  If the Name is not
+		// defined in that Dict, we get a nil.
+		object = objectt.Dict[decodeName(last)]
 	case Array:
+		// If the current object is an Array, the last path element must
+		// be an integer within the Array bounds.
 		if i, err2 := strconv.Atoi(last); err2 != nil || i < 0 {
 			err = fmt.Errorf("%s is an Array and %s is not a valid index", epath, last)
 			return
-		} else if i >= len(loct) {
+		} else if i >= len(objectt) {
 			err = fmt.Errorf("%s/%s does not exist (index out of range)", epath, last)
 			return
 		} else {
-			loc = loct[i]
+			object = objectt[i]
 		}
 	default:
 		err = fmt.Errorf("%s/%s is not an Array, Dict, or Stream", epath, last)
 		return
 	}
-	if ref, ok := loc.(Reference); ok && derefLast {
-		if loc, err = pdf.Get(ref); err != nil {
-			loc = nil
+	// The final object, that we just moved to, might be a Reference.  If
+	// so, and if derefLast is set, dereference it, and note it as the last
+	// Reference followed.
+	if ref, ok := object.(Reference); ok && derefLast {
+		if object, err = pdf.Fetch(ref); err != nil {
+			object = nil
 		}
-		lastTgt, lastRef = loc, ref
+		lastTgt, lastRef = object, ref
 	}
-	return loc, lastTgt, lastRef, nil
+	return object, lastTgt, lastRef, nil
 }
 
-// PGetBool is like PGet but asserts that the result is a boolean.
-func (pdf *PDF) PGetBool(path string) (v bool, err error) {
-	if o, err := pdf.PGet(path); err != nil {
-		return false, err
-	} else if v, ok := o.(bool); !ok {
-		return false, fmt.Errorf("%s is %T, not bool", path, o)
-	} else {
-		return v, nil
-	}
-}
-
-// PGetInt is like PGet but asserts that the result is an int.
-func (pdf *PDF) PGetInt(path string) (v int, err error) {
-	if o, err := pdf.PGet(path); err != nil {
-		return 0, err
-	} else if v, ok := o.(int); !ok {
-		return 0, fmt.Errorf("%s is %T, not int", path, o)
-	} else {
-		return v, nil
+// GetBool is like Get but asserts that the result is a boolean.
+func (pdf *PDF) GetBool(p Path) (v bool, err error) {
+	switch o := pdf.Get(p).(type) {
+	case error:
+		return false, o
+	case bool:
+		return o, nil
+	default:
+		return false, fmt.Errorf("%s is %T, not bool", p, o)
 	}
 }
 
-// PGetReal is like PGet but asserts that the result is a float64 (or an int,
+// GetInt is like Get but asserts that the result is an int.
+func (pdf *PDF) GetInt(p Path) (v int, err error) {
+	switch o := pdf.Get(p).(type) {
+	case error:
+		return 0, o
+	case int:
+		return o, nil
+	default:
+		return 0, fmt.Errorf("%s is %T, not int", p, o)
+	}
+}
+
+// GetReal is like Get but asserts that the result is a float64 (or an int,
 // which is converted to float64).
-func (pdf *PDF) PGetReal(path string) (v float64, err error) {
-	if o, err := pdf.PGet(path); err != nil {
-		return 0, err
-	} else if v, ok := o.(float64); ok {
-		return v, nil
-	} else if v, ok := o.(int); ok {
-		return float64(v), nil
-	} else {
-		return 0, fmt.Errorf("%s is %T, not float64 or int", path, o)
+func (pdf *PDF) GetReal(p Path) (v float64, err error) {
+	switch o := pdf.Get(p).(type) {
+	case error:
+		return 0, o
+	case float64:
+		return o, nil
+	case int:
+		return float64(o), nil
+	default:
+		return 0, fmt.Errorf("%s is %T, not float64 or int", p, o)
 	}
 }
 
-// PGetString is like PGet but asserts that the result is a string (or a []byte,
+// GetString is like Get but asserts that the result is a string (or a []byte,
 // which is converted to string).
-func (pdf *PDF) PGetString(path string) (v string, err error) {
-	if o, err := pdf.PGet(path); err != nil {
-		return "", err
-	} else if v, ok := o.(string); ok {
-		return v, nil
-	} else if v, ok := o.([]byte); ok {
-		return string(v), nil
-	} else {
-		return "", fmt.Errorf("%s is %T, not string or []byte", path, o)
+func (pdf *PDF) GetString(p Path) (v string, err error) {
+	switch o := pdf.Get(p).(type) {
+	case error:
+		return "", o
+	case string:
+		return o, nil
+	case []byte:
+		return string(o), nil
+	default:
+		return "", fmt.Errorf("%s is %T, not string or []byte", p, o)
 	}
 }
 
-// PGetName is like PGet but asserts that the result is a Name.
-func (pdf *PDF) PGetName(path string) (v Name, err error) {
-	if o, err := pdf.PGet(path); err != nil {
-		return "", err
-	} else if v, ok := o.(Name); !ok {
-		return "", fmt.Errorf("%s is %T, not Name", path, o)
-	} else {
-		return v, nil
+// GetName is like Get but asserts that the result is a Name.
+func (pdf *PDF) GetName(p Path) (v Name, err error) {
+	switch o := pdf.Get(p).(type) {
+	case error:
+		return "", o
+	case Name:
+		return o, nil
+	default:
+		return "", fmt.Errorf("%s is %T, not Name", p, o)
 	}
 }
 
-// PGetArray is like PGet but asserts that the result is an Array.
-func (pdf *PDF) PGetArray(path string) (v Array, err error) {
-	if o, err := pdf.PGet(path); err != nil {
-		return nil, err
-	} else if v, ok := o.(Array); !ok {
-		return nil, fmt.Errorf("%s is %T, not an Array", path, o)
-	} else {
-		return v, nil
+// GetArray is like Get but asserts that the result is an Array.
+func (pdf *PDF) GetArray(p Path) (v Array, err error) {
+	switch o := pdf.Get(p).(type) {
+	case error:
+		return nil, o
+	case Array:
+		return o, nil
+	default:
+		return nil, fmt.Errorf("%s is %T, not Array", p, o)
 	}
 }
 
-// PGetDict is like PGet but asserts that the result is a Dict.
-func (pdf *PDF) PGetDict(path string) (v Dict, err error) {
-	if o, err := pdf.PGet(path); err != nil {
-		return nil, err
-	} else if v, ok := o.(Dict); !ok {
-		return nil, fmt.Errorf("%s is %T, not Dict", path, o)
-	} else {
+// GetRectangle is like Get but asserts that the result is a Rectangle (i.e.,
+// an Array of four numbers).
+func (pdf *PDF) GetRectangle(p Path) (v Rectangle, err error) {
+	switch o := pdf.Get(p).(type) {
+	case error:
+		return v, o
+	case Array:
+		if len(o) != 4 {
+			return v, fmt.Errorf("%s has length %d, not 4 for Rectangle", p, len(o))
+		}
+		if v.LLX, err = pdf.GetReal(p.I(0)); err != nil {
+			return v, err
+		}
+		if v.LLY, err = pdf.GetReal(p.I(1)); err != nil {
+			return v, err
+		}
+		if v.URX, err = pdf.GetReal(p.I(2)); err != nil {
+			return v, err
+		}
+		if v.URY, err = pdf.GetReal(p.I(3)); err != nil {
+			return v, err
+		}
 		return v, nil
+	default:
+		return v, fmt.Errorf("%s is %T, not Array", p, o)
 	}
 }
 
-// PGetStream is like PGet but asserts that the result is a Stream.
-func (pdf *PDF) PGetStream(path string) (v Stream, err error) {
-	if o, err := pdf.PGet(path); err != nil {
-		return v, err
-	} else if v, ok := o.(Stream); !ok {
-		return v, fmt.Errorf("%s is %T, not Stream", path, o)
-	} else {
-		return v, nil
+// GetDict is like Get but asserts that the result is a Dict.
+func (pdf *PDF) GetDict(p Path) (v Dict, err error) {
+	switch o := pdf.Get(p).(type) {
+	case error:
+		return nil, o
+	case Dict:
+		return o, nil
+	default:
+		return nil, fmt.Errorf("%s is %T, not Dict", p, o)
 	}
 }
 
-// PGetRef is like PGet but asserts that the result is a Reference.
-func (pdf *PDF) PGetRef(path string) (v Reference, err error) {
-	if o, _, _, err := pdf.pget(path, false); err != nil {
+// GetStream is like Get but asserts that the result is a Stream.
+func (pdf *PDF) GetStream(p Path) (v Stream, err error) {
+	switch o := pdf.Get(p).(type) {
+	case error:
+		return v, o
+	case Stream:
+		return o, nil
+	default:
+		return v, fmt.Errorf("%s is %T, not Stream", p, o)
+	}
+}
+
+// GetReference is like Get but asserts that the result is a Reference.
+func (pdf *PDF) GetReference(p Path) (v Reference, err error) {
+	if o, _, _, err := pdf.pget(p, false); err != nil {
 		return v, err
 	} else if v, ok := o.(Reference); !ok {
-		return v, fmt.Errorf("%s is %T, not Reference", path, o)
+		return v, fmt.Errorf("%s is %T, not Reference", p, o)
 	} else {
 		return v, nil
 	}
 }
 
-// PSet sets the value at the specified path to the specified value.  It marks
-// the nearest ancestor object as dirty.  The path is interpreted as in PGet.
-func (pdf *PDF) PSet(path string, value Object) (err error) {
+// Set sets the value at the specified path to the specified value.  It marks
+// the nearest ancestor object as dirty.
+func (pdf *PDF) Set(p Path, value Object) (err error) {
 	var (
 		lastelm string
 		anchor  Object
 		lasttgt Object
 		lastref Reference
 	)
-	if path == "" || (path != "/" && strings.HasSuffix(path, "/")) || strings.Contains(path, "//") {
-		return fmt.Errorf("%q: invalid path", path)
+	// Validate the path.
+	if p == "/" || !strings.HasPrefix(string(p), "/") || strings.HasSuffix(string(p), "/") || strings.Contains(string(p), "//") {
+		err = fmt.Errorf("%q: invalid path", p)
+		return
 	}
-	// Take the last index off of the path.
-	if idx := strings.LastIndexByte(path, '/'); idx < 1 {
-		return fmt.Errorf("%q: invalid path", path)
+	// Take the last element off of the path.
+	if idx := strings.LastIndexByte(string(p), '/'); idx < 1 {
+		return fmt.Errorf("%q: invalid path", p)
 	} else {
-		path, lastelm = path[:idx], path[idx+1:]
+		p, lastelm = p[:idx], string(p[idx+1:])
 	}
-	// Get the object before the last index, which I'll call the anchor.
-	if anchor, lasttgt, lastref, err = pdf.pget(path, true); err != nil {
+	// Fetch the object before the last index, which I'll call the anchor.
+	if anchor, lasttgt, lastref, err = pdf.pget(p, true); err != nil {
 		return err
 	}
 	switch anchor := anchor.(type) {
 	case Dict:
+		// The anchor is a Dict.  If the last element is a Name already
+		// in that Dict and its value is a Reference, we set the value
+		// of the object addressed by that Reference.
+		if v, ok := anchor[Name(lastelm)].(Reference); ok {
+			pdf.UpdateObject(v, value)
+			return nil
+		}
+		// Otherwise we change the value of that Name in the Dict.
 		anchor[Name(lastelm)] = value
 	case Stream:
+		// The anchor is a Stream.  If the last element is a Name
+		// already in that Stream's Dict and its value is a Reference,
+		// we set the value of the object addressed by that Reference.
+		if v, ok := anchor.Dict[Name(lastelm)].(Reference); ok {
+			pdf.UpdateObject(v, value)
+			return nil
+		}
+		// Otherwise we change the value of that Name in the Stream's
+		// Dict.
 		anchor.Dict[Name(lastelm)] = value
 	case Array:
+		// The anchor is an Array.  The last element must be an integer
+		// index within the array bounds.
 		if i, err := strconv.Atoi(lastelm); err != nil || i < 0 {
-			return fmt.Errorf("%s is an Array and %s is not a valid index", path, lastelm)
+			return fmt.Errorf("%s is an Array and %s is not a valid index", p, lastelm)
 		} else if i >= len(anchor) {
-			return fmt.Errorf("%s/%s does not exist (index out of range)", path, lastelm)
+			return fmt.Errorf("%s/%s does not exist (index out of range)", p, lastelm)
+		} else if v, ok := anchor[i].(Reference); ok {
+			// The indexed element of the Array is a Reference.  Set
+			// the value of the object addressed by that Reference.
+			pdf.UpdateObject(v, value)
+			return nil
 		} else {
+			// The indexed element of the Array is anything else.
+			// Replace it with the new value.
 			anchor[i] = value
 		}
 	default:
-		return fmt.Errorf("%s is not an Array, Dict, or Stream", path)
+		return fmt.Errorf("%s is not an Array, Dict, or Stream", p)
 	}
+	// Mark the last indirect object we saw in the traversal as being dirty
+	// and needing to be rewritten.
 	pdf.UpdateObject(lastref, lasttgt)
 	return nil
 }
 
-// PAppend appends the specified value to the Array at the specified path.  It
-// marks the nearest ancestor object as dirty.  The path is interpreted as in
-// PGet.
-func (pdf *PDF) PAppend(path string, value Object) (err error) {
-	var aOrR Object
-
-	// There are two cases to handle: the array could be an "indirect
-	// object" accessed through a Reference, or it could be embedded in some
-	// other object.  We'll need to use pget(derefLast=false) to find out
-	// which.
-	if aOrR, _, _, err = pdf.pget(path, false); err != nil {
+// Append appends the specified value to the Array at the specified path.  It
+// marks the nearest ancestor object as dirty.
+func (pdf *PDF) Append(p Path, value Object) (err error) {
+	if array, err := pdf.GetArray(p); err != nil {
 		return err
+	} else {
+		array = append(array, value)
+		return pdf.Set(p, array)
 	}
-	switch aOrR := aOrR.(type) {
-	case Reference:
-		// It's a Reference to (presumably) an Array.  Append to the
-		// Array and update the Reference to point to the result.
-		if o, err := pdf.Get(aOrR); err != nil {
-			return fmt.Errorf("%s: %w", path, err)
-		} else if array, ok := o.(Array); !ok {
-			return fmt.Errorf("%s is %T, not Array", path, o)
-		} else {
-			array = append(array, value)
-			pdf.UpdateObject(aOrR, array)
-			return nil
-		}
-	case Array:
-		// It's an embedded Array.  Append to it, and set the path to
-		// the result.
-		var array = append(aOrR, value)
-		return pdf.PSet(path, array)
-	default:
-		return fmt.Errorf("%s is %T, not Array", path, aOrR)
-	}
-}
-
-// PathIndex adds an integer index to a path.
-func PathIndex(path string, index int) string {
-	return fmt.Sprintf("%s/%d", path, index)
-}
-
-// PathKey adds dictionary key to a path.
-func PathKey(path string, key Name) string {
-	return fmt.Sprintf("%s/%s", path, key)
 }
 
 // ArrayPaths returns an iterator of paths to the elements of an array.
-func ArrayPaths(arrayPath string, array Array) iter.Seq[string] {
-	return func(yield func(string) bool) {
+func ArrayPaths(arrayPath Path, array Array) iter.Seq[Path] {
+	return func(yield func(Path) bool) {
 		for i := range array {
-			if !yield(PathIndex(arrayPath, i)) {
+			if !yield(arrayPath.I(i)) {
 				return
 			}
 		}
@@ -316,12 +387,21 @@ func ArrayPaths(arrayPath string, array Array) iter.Seq[string] {
 
 // DictPaths returns an iterator of paths to the elements of a Dict (or Stream
 // Dict).
-func DictPaths(dictPath string, dict Dict) iter.Seq[string] {
-	return func(yield func(string) bool) {
+func DictPaths(dictPath Path, dict Dict) iter.Seq[Path] {
+	return func(yield func(Path) bool) {
 		for k := range dict {
-			if !yield(PathKey(dictPath, k)) {
+			if !yield(dictPath.K(k)) {
 				return
 			}
 		}
 	}
+}
+
+var nameDecodeRE = regexp.MustCompile(`#[0-9A-Fa-f][0-9A-Fa-f]`)
+
+func decodeName(s string) Name {
+	return Name(nameDecodeRE.ReplaceAllStringFunc(s, func(c string) string {
+		by, _ := hex.DecodeString(s[1:])
+		return string(by[0])
+	}))
 }

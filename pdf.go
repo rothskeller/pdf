@@ -51,6 +51,7 @@ type PDF struct {
 	Catalog Dict
 	Trailer Dict
 	updates map[Reference]Object
+	pages   []Path
 }
 
 // A Rectangle specifies a rectangle, in terms of its lower left and upper

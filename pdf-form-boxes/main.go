@@ -13,13 +13,12 @@ var boxno int
 
 func main() {
 	var (
-		srcFH  *os.File
-		src    *pdf.PDF
-		outFH  *os.File
-		out    *pdf.PDF
-		c      *pdf.Cursor
-		fields pdf.Array
-		err    error
+		srcFH    *os.File
+		src      *pdf.PDF
+		outFH    *os.File
+		out      *pdf.PDF
+		numPages int
+		err      error
 	)
 	if len(os.Args) != 2 {
 		fmt.Fprintln(os.Stderr, "usage: pdf-form-boxes pdf-file")
@@ -38,14 +37,52 @@ func main() {
 	if err = out.ImportPDF(src); err != nil {
 		goto ERROR
 	}
-	c = src.Cursor().Key("Root").Key("AcroForm").Key("Fields")
-	if fields, err = c.Array(); err != nil {
+	if numPages, err = src.NumPages(); err != nil {
 		goto ERROR
 	}
-	for i := range fields {
-		cc := c.Clone().Index(i)
-		if err = markField(cc, out); err != nil {
+	for pagenum := 1; pagenum <= numPages; pagenum++ {
+		var (
+			path   pdf.Path
+			annots pdf.Array
+		)
+		if path, err = src.PagePath(pagenum); err != nil {
 			goto ERROR
+		}
+		path = path.K("Annots")
+		switch obj := src.Get(path).(type) {
+		case error:
+			err = obj
+			goto ERROR
+		case nil:
+			continue // no page annotations
+		case pdf.Array:
+			annots = obj
+		default:
+			err = fmt.Errorf("%s is %T, not Array or nil", path, obj)
+			goto ERROR
+		}
+		for i := range annots {
+			var (
+				apath pdf.Path
+				annot pdf.Dict
+				rect  pdf.Rectangle
+			)
+			apath = path.I(i)
+			if annot, err = src.GetDict(apath); err != nil {
+				goto ERROR
+			}
+			if annot["Type"] != pdf.Name("Annot") || annot["Subtype"] != pdf.Name("Widget") {
+				continue
+			}
+			if rect, err = src.GetRectangle(apath.K("Rect")); err != nil {
+				continue // ill-formed, but we'll just ignore it
+			}
+			// TODO walk up the field dictionary chain to find the
+			// field type (handle radio buttons differently) and the
+			// field name (include in output)
+			if err = markRect(pagenum, rect, out); err != nil {
+				goto ERROR
+			}
 		}
 	}
 	if err = out.Write(); err != nil {
@@ -57,67 +94,25 @@ ERROR:
 	os.Exit(1)
 }
 
-func markField(c *pdf.Cursor, out *pdf.PDF) (err error) {
-	var (
-		field pdf.Dict
-	)
-	if field, err = c.Dict(); err != nil {
-		return err
-	}
-	if r, ok := field["Rect"]; ok {
-		if err = markRect(r.(pdf.Array), out); err != nil {
-			return err
-		}
-	}
-	if _, ok := field["Kids"]; ok {
-		if kids, err := c.Key("Kids").Array(); err != nil {
-			return err
-		} else {
-			for i := range kids {
-				cc := c.Clone().Index(i)
-				if err = markField(cc, out); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	return nil
-}
-
-func markRect(rect pdf.Array, out *pdf.PDF) (err error) {
-	var x, y, r, t float64
-
-	x = toFloat64(rect[0])
-	y = toFloat64(rect[1])
-	r = toFloat64(rect[2])
-	t = toFloat64(rect[3])
+func markRect(pagenum int, rect pdf.Rectangle, out *pdf.PDF) (err error) {
 	boxno++
-	fmt.Printf("Box %2d: L %6.2f R %6.2f B %6.2f T %6.2f  //  X %6.2f Y %6.2f R %4.2f\n",
-		boxno, x, r, y, t, (x+r)/2, (y+t)/2, (r-x)/2)
+	fmt.Printf("Box %2d: P %d L %6.2f R %6.2f B %6.2f T %6.2f  //  P %d X %6.2f Y %6.2f R %4.2f\n",
+		boxno, pagenum, rect.LLX, rect.URX, rect.LLY, rect.URY, pagenum, (rect.LLX+rect.URX)/2, (rect.LLY+rect.URY)/2, (rect.URX-rect.LLX)/2)
 	if err = (pdf.Box{
-		Rectangle: pdf.RectangleRT(x, y, r, t),
+		Page:      pagenum,
+		Rectangle: pdf.RectangleRT(rect.LLX, rect.LLY, rect.URX, rect.URY),
 		Fill:      []byte{255, 0, 0, 128},
 	}).Draw(out); err != nil {
 		return err
 	}
 	if err = (pdf.Text{
+		Page:      pagenum,
 		String:    strconv.Itoa(boxno),
-		Rectangle: pdf.RectangleRT(x+1, y, r, t-1),
+		Rectangle: pdf.RectangleRT(rect.LLX+1, rect.LLY, rect.URX, rect.URY-1),
 		FontSize:  8,
 		VAlign:    "top",
 	}).Draw(out); err != nil && err != pdf.ErrDoesntFit {
 		return err
 	}
 	return nil
-}
-
-func toFloat64(n pdf.Object) float64 {
-	switch n := n.(type) {
-	case float64:
-		return n
-	case int:
-		return float64(n)
-	default:
-		panic("wrong number type")
-	}
 }

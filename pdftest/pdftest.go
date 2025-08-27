@@ -12,7 +12,7 @@ func main() {
 		p2  *pdf.PDF
 		err error
 	)
-	os.Chdir("/Users/stever/src/pdf-v2")
+	os.Chdir("/Users/stever/src/pdf")
 	fh, _ := os.Create("test.pdf")
 	p := pdf.New(fh)
 	fh2, err := os.Open("notrep.pdf")

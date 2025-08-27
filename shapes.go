@@ -30,7 +30,6 @@ type Line struct {
 
 func (b Line) Draw(pdf *PDF) (err error) {
 	var (
-		c      *Cursor
 		gstate Name
 		sb     strings.Builder
 	)
@@ -55,12 +54,8 @@ func (b Line) Draw(pdf *PDF) (err error) {
 	if b.Width == 0 {
 		b.Width = 1.0
 	}
-	// Get the page cursor.
-	if c, err = pdf.CursorForPage(b.Page); err != nil {
-		return err
-	}
 	// Create the alpha graphic state if needed.
-	if gstate, err = maybeAddAlpha(c, nil, b.Stroke); err != nil {
+	if gstate, err = pdf.maybeAddAlpha(b.Page, nil, b.Stroke); err != nil {
 		return err
 	}
 	// Draw the box.
@@ -93,7 +88,6 @@ type Box struct {
 
 func (b Box) Draw(pdf *PDF) (err error) {
 	var (
-		c      *Cursor
 		gstate Name
 		sb     strings.Builder
 	)
@@ -127,12 +121,8 @@ func (b Box) Draw(pdf *PDF) (err error) {
 	if len(b.Fill) == 0 && len(b.Stroke) == 0 {
 		return nil // nothing to do
 	}
-	// Get the page cursor.
-	if c, err = pdf.CursorForPage(b.Page); err != nil {
-		return err
-	}
 	// Create the alpha graphic state if needed.
-	if gstate, err = maybeAddAlpha(c, b.Fill, b.Stroke); err != nil {
+	if gstate, err = pdf.maybeAddAlpha(b.Page, b.Fill, b.Stroke); err != nil {
 		return err
 	}
 	// Draw the box.
@@ -177,7 +167,6 @@ type Cross struct {
 
 func (b Cross) Draw(pdf *PDF) (err error) {
 	var (
-		c      *Cursor
 		gstate Name
 		sb     strings.Builder
 	)
@@ -207,12 +196,8 @@ func (b Cross) Draw(pdf *PDF) (err error) {
 	if len(b.Stroke) == 3 {
 		b.Stroke = append(b.Stroke, 255)
 	}
-	// Get the page cursor.
-	if c, err = pdf.CursorForPage(b.Page); err != nil {
-		return err
-	}
 	// Create the alpha graphic state if needed.
-	if gstate, err = maybeAddAlpha(c, nil, b.Stroke); err != nil {
+	if gstate, err = pdf.maybeAddAlpha(b.Page, nil, b.Stroke); err != nil {
 		return err
 	}
 	// Draw the cross.
@@ -250,7 +235,6 @@ type Circle struct {
 
 func (b Circle) Draw(pdf *PDF) (err error) {
 	var (
-		c      *Cursor
 		gstate Name
 		sb     strings.Builder
 	)
@@ -284,12 +268,8 @@ func (b Circle) Draw(pdf *PDF) (err error) {
 	if len(b.Fill) == 0 && len(b.Stroke) == 0 {
 		return nil // nothing to do
 	}
-	// Get the page cursor.
-	if c, err = pdf.CursorForPage(b.Page); err != nil {
-		return err
-	}
 	// Create the alpha graphic state if needed.
-	if gstate, err = maybeAddAlpha(c, b.Fill, b.Stroke); err != nil {
+	if gstate, err = pdf.maybeAddAlpha(b.Page, b.Fill, b.Stroke); err != nil {
 		return err
 	}
 	// Draw the circle.
@@ -331,14 +311,13 @@ func (b Circle) Draw(pdf *PDF) (err error) {
 	return pdf.AddPageContent(b.Page, sb.String())
 }
 
-func maybeAddAlpha(pageC *Cursor, fill, stroke []byte) (name Name, err error) {
+func (pdf *PDF) maybeAddAlpha(pagenum int, fill, stroke []byte) (name Name, err error) {
 	var (
 		fillAlpha   byte
 		strokeAlpha byte
-		resources   Dict
 		extGState   Dict
 		state       Dict
-		c           *Cursor
+		path        Path
 	)
 	if len(fill) > 3 {
 		fillAlpha = fill[3]
@@ -354,20 +333,28 @@ func maybeAddAlpha(pageC *Cursor, fill, stroke []byte) (name Name, err error) {
 		return "", nil
 	}
 	name = Name(fmt.Sprintf("F%dS%d", fillAlpha, strokeAlpha))
-	c = pageC.Clone().Key("Resources")
-	if resources, err = c.Dict(); err != nil {
+	if path, err = pdf.PagePath(pagenum); err != nil {
 		return "", err
 	}
-	if _, ok := resources["ExtGState"]; !ok {
+	path = path.K("Resources").K("ExtGState")
+	switch obj := pdf.Get(path).(type) {
+	case error:
+		return "", obj
+	case nil:
 		extGState = Dict{}
-		if err = c.SetKey("ExtGState", extGState); err != nil {
+		if err = pdf.Set(path, extGState); err != nil {
 			return "", err
 		}
-	} else if extGState, err = c.Key("ExtGState").Dict(); err != nil {
-		return "", err
-	}
-	if _, ok := extGState[name]; ok {
-		return name, nil
+	case Dict:
+		if _, ok := obj[name]; ok {
+			return name, nil
+		}
+		extGState = obj
+		if err = pdf.Set(path, extGState); err != nil {
+			return "", err
+		}
+	default:
+		return "", fmt.Errorf("%s is %T, not Dict or nil", path, obj)
 	}
 	state = Dict{"Type": Name("ExtGState")}
 	if fillAlpha != 255 {
@@ -376,5 +363,6 @@ func maybeAddAlpha(pageC *Cursor, fill, stroke []byte) (name Name, err error) {
 	if strokeAlpha != 255 {
 		state["CA"] = float64(strokeAlpha) / 255.0
 	}
-	return name, c.SetKey(name, state)
+	extGState[name] = state
+	return name, nil
 }

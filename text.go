@@ -72,7 +72,6 @@ var ErrDoesntFit = errors.New("text does not fit in bounding box")
 func (t Text) Draw(pdf *PDF) (err error) {
 	var (
 		top     float64
-		page    *Cursor
 		font    Name
 		fitErr  error
 		content strings.Builder
@@ -85,10 +84,7 @@ func (t Text) Draw(pdf *PDF) (err error) {
 	}
 	fitErr = t.wrapAndShrink()
 	top = t.top()
-	if page, err = pdf.CursorForPage(t.Page); err != nil {
-		return errors.New("invalid Page")
-	}
-	if font, err = t.addFont(page); err != nil {
+	if font, err = t.addFont(pdf); err != nil {
 		return err
 	}
 	t.emitSetup(&content, font)
@@ -269,26 +265,29 @@ func (t *Text) top() float64 {
 
 // addFont ensures that the font is in the page's resource dictionary, and
 // returns the name by which it's known there.
-func (t *Text) addFont(page *Cursor) (name Name, err error) {
+func (t *Text) addFont(pdf *PDF) (name Name, err error) {
 	var (
-		res    Dict
 		fonts  Dict
 		maxnum int
-		c      = page.Clone().Key("Resources")
+		path   Path
 	)
-	if res, err = c.Dict(); err != nil {
-		goto ERROR
+	if path, err = pdf.PagePath(t.Page); err != nil {
+		return "", err
 	}
-	if _, ok := res["Font"]; !ok {
+	path = path.K("Resources").K("Font")
+	switch obj := pdf.Get(path).(type) {
+	case error:
+		return "", err
+	case nil:
 		fonts = make(Dict)
-		c.SetKey("Font", fonts)
-	} else if fonts, err = c.Key("Font").Dict(); err != nil {
-		goto ERROR
+	case Dict:
+		fonts = obj
+	default:
+		return "", fmt.Errorf("%s is %T, not Dict or nil", path, obj)
 	}
 	for n := range fonts {
-		fc := c.Clone().Key(n)
-		if font, err := fc.Dict(); err != nil {
-			goto ERROR
+		if font, err := pdf.GetDict(path.K(n)); err != nil {
+			return "", err
 		} else if font["Type"] == Name("Font") &&
 			font["Subtype"] == Name("Type1") &&
 			font["BaseFont"] == Name(t.Font) {
@@ -302,14 +301,15 @@ func (t *Text) addFont(page *Cursor) (name Name, err error) {
 	}
 	// Not found, need to add it.
 	name = Name(fmt.Sprintf("F%d", maxnum+1))
-	err = c.SetKey(name, Dict{
+	fonts[name] = Dict{
 		"Type":     Name("Font"),
 		"Subtype":  Name("Type1"),
 		"BaseFont": Name(t.Font),
-	})
-	return name, err
-ERROR:
-	return "", fmt.Errorf("adding font: %w", err)
+	}
+	if err = pdf.Set(path, fonts); err != nil {
+		return "", err
+	}
+	return name, nil
 }
 
 // emitSetup emits all of the preliminary content instructions before writing
