@@ -334,6 +334,13 @@ func (c *Cursor) Pop() *Cursor {
 // Error returns any accumulated error on the cursor.
 func (c *Cursor) Error() error { return c.err }
 
+// SetError allows external code to put a Cursor into an error state.
+func (c *Cursor) SetError(err error) {
+	if c.err == nil {
+		c.err = err
+	}
+}
+
 // SetObject sets the object at the current cursor location.  This should be
 // called even if the object is accessed by pointer and the pointer hasn't
 // changed (e.g., updating a Dict) , as it will mark the object as dirty and
