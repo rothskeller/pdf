@@ -63,9 +63,12 @@ func main() {
 		}
 		for i := range annots {
 			var (
-				apath pdf.Path
-				annot pdf.Dict
-				rect  pdf.Rectangle
+				apath  pdf.Path
+				annot  pdf.Dict
+				rect   pdf.Rectangle
+				ftype  pdf.Name
+				ftitle string
+				fflags = -1
 			)
 			apath = path.I(i)
 			if annot, err = src.GetDict(apath); err != nil {
@@ -77,10 +80,25 @@ func main() {
 			if rect, err = src.GetRectangle(apath.K("Rect")); err != nil {
 				continue // ill-formed, but we'll just ignore it
 			}
-			// TODO walk up the field dictionary chain to find the
-			// field type (handle radio buttons differently) and the
-			// field name (include in output)
-			if err = markRect(pagenum, rect, out); err != nil {
+			for annot != nil {
+				if ff, ok := annot["Ff"].(int); ok && fflags == -1 {
+					fflags = ff
+				}
+				if ft, ok := annot["FT"].(pdf.Name); ok && ftype == "" {
+					ftype = ft
+				}
+				if t, ok := annot["T"].(string); ok && ftitle == "" {
+					ftitle = t
+				}
+				apath = apath.K("Parent")
+				annot, _ = src.GetDict(apath)
+			}
+			if ftype == "Btn" && fflags != -1 && fflags&0x8000 != 0 {
+				err = markRadio(pagenum, rect, ftitle, out)
+			} else {
+				err = markRect(pagenum, rect, ftitle, out)
+			}
+			if err != nil {
 				goto ERROR
 			}
 		}
@@ -94,10 +112,10 @@ ERROR:
 	os.Exit(1)
 }
 
-func markRect(pagenum int, rect pdf.Rectangle, out *pdf.PDF) (err error) {
+func markRect(pagenum int, rect pdf.Rectangle, title string, out *pdf.PDF) (err error) {
 	boxno++
-	fmt.Printf("Box %2d: P %d L %6.2f R %6.2f B %6.2f T %6.2f  //  P %d X %6.2f Y %6.2f R %4.2f\n",
-		boxno, pagenum, rect.LLX, rect.URX, rect.LLY, rect.URY, pagenum, (rect.LLX+rect.URX)/2, (rect.LLY+rect.URY)/2, (rect.URX-rect.LLX)/2)
+	fmt.Printf("Box %2d: P %d L %6.2f R %6.2f B %6.2f T %6.2f  //  %s\n",
+		boxno, pagenum, rect.LLX, rect.URX, rect.LLY, rect.URY, title)
 	if err = (pdf.Box{
 		Page:      pagenum,
 		Rectangle: pdf.RectangleRT(rect.LLX, rect.LLY, rect.URX, rect.URY),
@@ -109,6 +127,29 @@ func markRect(pagenum int, rect pdf.Rectangle, out *pdf.PDF) (err error) {
 		Page:      pagenum,
 		String:    strconv.Itoa(boxno),
 		Rectangle: pdf.RectangleRT(rect.LLX+1, rect.LLY, rect.URX, rect.URY-1),
+		FontSize:  8,
+		VAlign:    "top",
+	}).Draw(out); err != nil && err != pdf.ErrDoesntFit {
+		return err
+	}
+	return nil
+}
+func markRadio(pagenum int, rect pdf.Rectangle, title string, out *pdf.PDF) (err error) {
+	boxno++
+	fmt.Printf("Box %2d: P %d X %6.2f Y %6.2f R 2  //  %s\n",
+		boxno, pagenum, (rect.LLX+rect.URX)/2, (rect.LLY+rect.URY)/2, title)
+	if err = (pdf.Circle{
+		Page:   pagenum,
+		Center: pdf.PointXY((rect.LLX+rect.URX)/2, (rect.LLY+rect.URY)/2),
+		Radius: 2,
+		Fill:   []byte{255, 0, 0, 128},
+	}).Draw(out); err != nil {
+		return err
+	}
+	if err = (pdf.Text{
+		Page:      pagenum,
+		String:    strconv.Itoa(boxno),
+		Rectangle: pdf.RectangleRT(rect.LLX, rect.LLY-9, rect.LLX+20, rect.LLY-1),
 		FontSize:  8,
 		VAlign:    "top",
 	}).Draw(out); err != nil && err != pdf.ErrDoesntFit {
