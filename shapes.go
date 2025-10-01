@@ -84,6 +84,9 @@ type Box struct {
 	// Stroke gives the stroke color for the box, as an array of three or
 	// four bytes (R, G, B, and maybe A).  Default is no stroke.
 	Stroke []byte
+	// StrokeWidth gives the stroke width for the box (meaningful only if
+	// Stroke is specified).  Default is 1pt.
+	StrokeWidth float64
 }
 
 func (b Box) Draw(pdf *PDF) (err error) {
@@ -118,6 +121,9 @@ func (b Box) Draw(pdf *PDF) (err error) {
 	if len(b.Stroke) == 3 {
 		b.Stroke = append(b.Stroke, 255)
 	}
+	if b.StrokeWidth == 0 {
+		b.StrokeWidth = 1.0
+	}
 	if len(b.Fill) == 0 && len(b.Stroke) == 0 {
 		return nil // nothing to do
 	}
@@ -134,7 +140,7 @@ func (b Box) Draw(pdf *PDF) (err error) {
 		fmt.Fprintf(&sb, " %.2f %.2f %.2f rg", float64(b.Fill[0])/255, float64(b.Fill[1])/255, float64(b.Fill[2])/255)
 	}
 	if len(b.Stroke) != 0 {
-		fmt.Fprintf(&sb, " %.2f %.2f %.2f RG", float64(b.Stroke[0])/255, float64(b.Stroke[1])/255, float64(b.Stroke[2])/255)
+		fmt.Fprintf(&sb, " %.2f %.2f %.2f RG %.2f w", float64(b.Stroke[0])/255, float64(b.Stroke[1])/255, float64(b.Stroke[2])/255, b.StrokeWidth)
 	}
 	fmt.Fprintf(&sb, " %.2f %.2f %.2f %.2f re",
 		b.Rectangle.LLX, b.Rectangle.LLY,
