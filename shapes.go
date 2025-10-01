@@ -63,7 +63,7 @@ func (b Line) Draw(pdf *PDF) (err error) {
 	if gstate != "" {
 		fmt.Fprintf(&sb, " %s gs", EncodeName(gstate))
 	}
-	fmt.Fprintf(&sb, " %.2f %.2f %.2f RG %2.f w",
+	fmt.Fprintf(&sb, " %.2f %.2f %.2f RG %.2f w",
 		float64(b.Stroke[0])/255, float64(b.Stroke[1])/255, float64(b.Stroke[2])/255, b.Width)
 	fmt.Fprintf(&sb, " %.2f %.2f m %.2f %.2f l h s",
 		b.P1.X, b.P1.Y, b.P2.X, b.P2.Y)
