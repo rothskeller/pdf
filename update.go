@@ -342,12 +342,14 @@ func (imp *importer) importDefaultFields(pagenum int, srcPath, destPath Path) (e
 // one we want.
 func (imp *importer) importAnnotation(annotPath, destPath Path, pagenum, annotIdx int) (err error) {
 	var (
-		annot  Dict
-		appS   Stream
-		rect   Rectangle
-		name   Name
-		out    Object
-		outref Reference
+		annot   Dict
+		appS    Stream
+		appBBox Rectangle
+		rect    Rectangle
+		name    Name
+		out     Object
+		outref  Reference
+		xm      Matrix
 	)
 	if annot, err = imp.src.GetDict(annotPath); err != nil {
 		return err
@@ -357,6 +359,16 @@ func (imp *importer) importAnnotation(annotPath, destPath Path, pagenum, annotId
 	}
 	if appS, err = imp.src.GetStream(annotPath.K("AP").K("N").K("Off")); err != nil {
 		return nil // not one we're interested in
+	}
+	if appBBox, err = imp.src.GetRectangle(annotPath.K("AP").K("N").K("Off").K("BBox")); err != nil {
+		return nil // ill-formed, but we'll just ignore it
+	}
+	if m, err := imp.src.GetArray(annotPath.K("AP").K("N").K("Off").K("Matrix")); err == nil {
+		if am, err := m.ToMatrix(); err == nil {
+			if am.A != 1 || am.B != 0 || am.C != 0 || am.D != 1 || am.E != 0 || am.F != 0 {
+				return fmt.Errorf("%s/AP/N/Off/Matrix: non-identity matrix not supported")
+			}
+		}
 	}
 	if ft, ff := imp.src.findFieldDict(annotPath); ft != "Btn" || ff&0x10000 != 0 {
 		return nil // not one we're interested in
@@ -386,10 +398,18 @@ func (imp *importer) importAnnotation(annotPath, destPath Path, pagenum, annotId
 	default:
 		return fmt.Errorf("%s is %T, not Dict or nil", destPath, obj)
 	}
+	// The lower left corner of the annotation should go at the lower left
+	// corner of the widget rectangle.
+	xm.E = rect.LLX - appBBox.LLX
+	xm.F = rect.LLY - appBBox.LLY
+	// The width and height of the annotation should be scaled to the size
+	// of the widget rectangle.
+	xm.A = (rect.URX - rect.LLX) / (appBBox.URX - appBBox.LLX)
+	xm.D = (rect.URY - rect.LLY) / (appBBox.URY - appBBox.LLY)
 	// Add content to the destination page to display the annotation.
 	return imp.dest.AddPageContent(pagenum,
-		fmt.Sprintf("q 0 J 1 w 0 j 0 G 0 g 1 0 0 1 %.2f %.2f cm %s Do Q",
-			-rect.LLX, -rect.LLY, EncodeName(name)))
+		fmt.Sprintf("q 0 J 1 w 0 j 0 G 0 g %.2f 0 0 %.2f %.2f %.2f cm %s Do Q",
+			xm.A, xm.D, xm.E, xm.F, EncodeName(name)))
 }
 
 func (pdf *PDF) findFieldDict(annotPath Path) (ft Name, ff int) {
