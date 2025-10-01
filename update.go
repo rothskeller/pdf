@@ -366,7 +366,7 @@ func (imp *importer) importAnnotation(annotPath, destPath Path, pagenum, annotId
 	if m, err := imp.src.GetArray(annotPath.K("AP").K("N").K("Off").K("Matrix")); err == nil {
 		if am, err := m.ToMatrix(); err == nil {
 			if am.A != 1 || am.B != 0 || am.C != 0 || am.D != 1 || am.E != 0 || am.F != 0 {
-				return fmt.Errorf("%s/AP/N/Off/Matrix: non-identity matrix not supported")
+				return fmt.Errorf("%s/AP/N/Off/Matrix: non-identity matrix not supported", annotPath)
 			}
 		}
 	}

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/rothskeller/pdf"
+	"github.com/rothskeller/pdf/v2"
 )
 
 func main() {

@@ -1,4 +1,4 @@
-module github.com/rothskeller/pdf
+module github.com/rothskeller/pdf/v2
 
 go 1.25
 

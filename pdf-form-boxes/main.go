@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/rothskeller/pdf"
+	"github.com/rothskeller/pdf/v2"
 )
 
 var boxno int

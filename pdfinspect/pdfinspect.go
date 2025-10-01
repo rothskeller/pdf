@@ -19,7 +19,7 @@ import (
 	"strings"
 
 	"github.com/davecgh/go-spew/spew"
-	"github.com/rothskeller/pdf"
+	"github.com/rothskeller/pdf/v2"
 )
 
 func main() {
