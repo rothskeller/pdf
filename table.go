@@ -30,6 +30,11 @@ type Table struct {
 	// CellBorderStroke is the color of the border drawn around each cell of
 	// the table.
 	CellBorderStroke []byte
+	// Align specifies the alignment of the table within the Rectangle.  It
+	// contains up to two letters:  "t", "m", or "b" to specify top, middle,
+	// or bottom vertical alignment, and "l", "c", or "r" to specify left,
+	// center, or right horizontal alignment.  The default is "tc".
+	Align string
 
 	widths  []float64
 	heights []float64
@@ -106,9 +111,23 @@ func (t *Table) Cell(cell *Cell) {
 	}
 }
 
-// Draw draws a table.  The table Rectangle is left encapsulating the remaining
-// space on the page.  If the table doesn't fit on the page, nothing is drawn
-// and ErrDoesntFit is returned.
+// Size returns the computed size of the table.  It must be called before Draw.
+// (To get the saze of the table after Draw, look at its Rectangle.)
+func (t *Table) Size() (width, height float64) {
+	for _, w := range t.widths {
+		width += w + 2*t.CellPadX + t.CellBorderWidth
+	}
+	for _, h := range t.heights {
+		height += h + 2*t.CellPadY + t.CellBorderWidth
+	}
+	width += 2*t.TableBorderWidth - t.CellBorderWidth
+	height += 2*t.TableBorderWidth - t.CellBorderWidth
+	return width, height
+}
+
+// Draw draws a table.  The table Rectangle is left encapsulating the space used
+// by the table.  If the table doesn't fit on the page, nothing is drawn and
+// ErrDoesntFit is returned.
 func (t *Table) Draw(pdf *PDF) (err error) {
 	var (
 		twidth  float64
@@ -126,12 +145,23 @@ func (t *Table) Draw(pdf *PDF) (err error) {
 	// Compute the table dimensions.
 	twidth += 2*t.TableBorderWidth + float64(len(t.widths)-1)*t.CellBorderWidth
 	theight += 2*t.TableBorderWidth + float64(len(t.heights)-1)*t.CellBorderWidth
-	if theight > t.Rectangle.URY-t.Rectangle.LLY {
+	if theight > t.Rectangle.URY-t.Rectangle.LLY || twidth > t.Rectangle.URX-t.Rectangle.LLX {
 		return ErrDoesntFit
 	}
 	// Compute the table position.
+	switch {
+	case strings.ContainsRune(t.Align, 'm'):
+		t.Rectangle.URY = (t.Rectangle.LLY + t.Rectangle.URY + theight) / 2
+	case strings.ContainsRune(t.Align, 'b'):
+		t.Rectangle.URY = t.Rectangle.LLY + theight
+	}
 	t.Rectangle.LLY = t.Rectangle.URY - theight
-	t.Rectangle.LLX = (t.Rectangle.LLX + t.Rectangle.URX - twidth) / 2
+	switch {
+	case strings.ContainsRune(t.Align, 'c'):
+		t.Rectangle.LLX = (t.Rectangle.LLX + t.Rectangle.URX - twidth) / 2
+	case strings.ContainsRune(t.Align, 'r'):
+		t.Rectangle.LLX = t.Rectangle.URX - twidth
+	}
 	t.Rectangle.URX = t.Rectangle.LLX + twidth
 	// Draw each cell.
 	for _, cell := range t.cells {
