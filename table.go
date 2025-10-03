@@ -157,10 +157,12 @@ func (t *Table) Draw(pdf *PDF) (err error) {
 	}
 	t.Rectangle.LLY = t.Rectangle.URY - theight
 	switch {
-	case strings.ContainsRune(t.Align, 'c'):
-		t.Rectangle.LLX = (t.Rectangle.LLX + t.Rectangle.URX - twidth) / 2
+	case strings.ContainsRune(t.Align, 'l'):
+		// no change to t.Rectangle.LLX
 	case strings.ContainsRune(t.Align, 'r'):
 		t.Rectangle.LLX = t.Rectangle.URX - twidth
+	default:
+		t.Rectangle.LLX = (t.Rectangle.LLX + t.Rectangle.URX - twidth) / 2
 	}
 	t.Rectangle.URX = t.Rectangle.LLX + twidth
 	// Draw each cell.
