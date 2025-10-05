@@ -111,6 +111,20 @@ func (t *Table) Cell(cell *Cell) {
 	}
 }
 
+// InsertRow inserts an empty row at the specified row number.  In other words,
+// any existing Cells with a row number >= the specified number have their row
+// number incremented.
+func (t *Table) InsertRow(row int) {
+	for _, cell := range t.cells {
+		if cell.Row >= row {
+			cell.Row++
+		} else if cell.Row+cell.RowSpan > row {
+			cell.RowSpan++
+		}
+	}
+	t.heights = slices.Insert(t.heights, row, 0)
+}
+
 // Size returns the computed size of the table.  It must be called before Draw.
 // (To get the saze of the table after Draw, look at its Rectangle.)
 func (t *Table) Size() (width, height float64) {
