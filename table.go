@@ -71,7 +71,7 @@ func (t *Table) ColumnWidths() []float64 {
 
 // SetColumnWidths sets the column widths.  Call this before calling Cell.
 func (t *Table) SetColumnWidths(widths []float64) {
-	t.widths = widths
+	t.widths = slices.Clone(widths)
 }
 
 // Cell adds a cell to the table.  Cells may be added in any order.  Note that
