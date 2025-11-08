@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sync/atomic"
 )
 
 // USLetterPortrait is the most common mediaBox parameter to AddPage.
@@ -113,17 +114,29 @@ func (pdf *PDF) ImportPDF(otherPDF *PDF) (err error) {
 	if pdf == otherPDF {
 		panic("pdfstruct.ImportPDF cannot import from same PDF file")
 	}
-	var imp = importer{src: otherPDF, dest: pdf, objmap: make(map[Reference]Reference)}
+	var imp = Importer{src: otherPDF, dest: pdf, objmap: make(map[Reference]Reference)}
 	return imp.importPages()
 }
 
-type importer struct {
+// NewImporter creates a new Importer object, which can be used to import pages
+// from another PDF into this one by calling its ImportPage method.
+func (pdf *PDF) NewImporter(otherPDF *PDF) (imp *Importer, err error) {
+	if pdf == otherPDF {
+		panic("pdfstruct.ImportPDF cannot import from same PDF file")
+	}
+	imp = &Importer{src: otherPDF, dest: pdf, objmap: make(map[Reference]Reference)}
+	return imp, nil
+}
+
+var formID atomic.Uint64
+
+type Importer struct {
 	src    *PDF
 	dest   *PDF
 	objmap map[Reference]Reference
 }
 
-func (imp *importer) importPages() (err error) {
+func (imp *Importer) importPages() (err error) {
 	var (
 		numPages  int
 		destPages int
@@ -153,14 +166,48 @@ func (imp *importer) importPages() (err error) {
 		if destPath, err = imp.dest.PagePath(pagenum); err != nil {
 			return err
 		}
-		if err = imp.importPage(pagenum, srcPath, destPath); err != nil {
+		if err = imp.importPage(pagenum, pagenum, srcPath, destPath); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (imp *importer) importPage(pagenum int, srcPath, destPath Path) (err error) {
+func (imp *Importer) ImportPage(srcPageNum, destPageNum int) (err error) {
+	var (
+		srcPath   Path
+		destPages int
+		destPath  Path
+	)
+	if srcPath, err = imp.src.PagePath(srcPageNum); err != nil {
+		return err
+	}
+	if destPages, err = imp.dest.NumPages(); err != nil {
+		return err
+	}
+	if destPageNum < 1 || destPageNum > destPages+1 {
+		return fmt.Errorf("invalid destination page number %d", destPageNum)
+	}
+	if destPageNum == destPages+1 {
+		var mediaBox Rectangle
+
+		if mediaBox, err = imp.src.GetRectangle(srcPath.K("MediaBox")); err != nil {
+			return err
+		}
+		if err = imp.dest.AddPage(mediaBox); err != nil {
+			return err
+		}
+	}
+	if destPath, err = imp.dest.PagePath(destPageNum); err != nil {
+		return err
+	}
+	if err = imp.importPage(srcPageNum, destPageNum, srcPath, destPath); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (imp *Importer) importPage(srcPageNum, destPageNum int, srcPath, destPath Path) (err error) {
 	var (
 		srcBBox   Rectangle
 		destBBox  Rectangle
@@ -183,17 +230,18 @@ func (imp *importer) importPage(pagenum int, srcPath, destPath Path) (err error)
 		return err
 	}
 	// Import the source page content stream(s).
-	formName = Name(fmt.Sprintf("ImportedPage%d", pagenum))
+	id := formID.Add(1)
+	formName = Name(fmt.Sprintf("ImportedPage%d", id))
 	if err = imp.importContentStreams(formName, srcPath, resources, destPath, srcBBox); err != nil {
 		return err
 	}
-	if err = imp.dest.AddPageContent(pagenum, fmt.Sprintf("q 0 J 1 w 0 j 0 G 0 g %s Do Q", EncodeName(formName))); err != nil {
+	if err = imp.dest.AddPageContent(destPageNum, fmt.Sprintf("q 0 J 1 w 0 j 0 G 0 g %s Do Q", EncodeName(formName))); err != nil {
 		return err
 	}
-	return imp.importDefaultFields(pagenum, srcPath, destPath)
+	return imp.importDefaultFields(destPageNum, srcPath, destPath)
 }
 
-func (imp *importer) importResources(srcPath Path) (res Dict, err error) {
+func (imp *Importer) importResources(srcPath Path) (res Dict, err error) {
 	var (
 		pagePath     Path
 		srcPage      Dict
@@ -225,7 +273,7 @@ func (imp *importer) importResources(srcPath Path) (res Dict, err error) {
 	}
 }
 
-func (imp *importer) importDeepObject(obj Object) (out Object, err error) {
+func (imp *Importer) importDeepObject(obj Object) (out Object, err error) {
 	switch obj := obj.(type) {
 	case Reference:
 		if outref := imp.objmap[obj]; outref.Number != 0 {
@@ -270,7 +318,7 @@ func (imp *importer) importDeepObject(obj Object) (out Object, err error) {
 	}
 }
 
-func (imp *importer) importContentStreams(formName Name, srcPath Path, resources Dict, destPath Path, bbox Rectangle) (err error) {
+func (imp *Importer) importContentStreams(formName Name, srcPath Path, resources Dict, destPath Path, bbox Rectangle) (err error) {
 	var (
 		cstrPaths []Path
 		outref    Reference
@@ -319,7 +367,7 @@ func (imp *importer) importContentStreams(formName Name, srcPath Path, resources
 // importDefaultFields locates any checkbox or radio button fields, finds the
 // appearance dictionary for their "off" state, and adds that to the destination
 // page.
-func (imp *importer) importDefaultFields(pagenum int, srcPath, destPath Path) (err error) {
+func (imp *Importer) importDefaultFields(pagenum int, srcPath, destPath Path) (err error) {
 	srcPath = srcPath.K("Annots")
 	switch arr := imp.src.Get(srcPath).(type) {
 	case error:
@@ -340,7 +388,7 @@ func (imp *importer) importDefaultFields(pagenum int, srcPath, destPath Path) (e
 
 // importAnnotation imports a single annotation into the destination, if it's
 // one we want.
-func (imp *importer) importAnnotation(annotPath, destPath Path, pagenum, annotIdx int) (err error) {
+func (imp *Importer) importAnnotation(annotPath, destPath Path, pagenum, annotIdx int) (err error) {
 	var (
 		annot   Dict
 		appS    Stream
