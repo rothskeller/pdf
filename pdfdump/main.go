@@ -3,6 +3,7 @@ package main
 import (
 	"cmp"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -36,7 +37,6 @@ func main() {
 	refs = make(map[pdf.Reference]struct{})
 	if err = getAllRefs(p, refs, p.Trailer); err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: %s: %s\n", os.Args[1], err)
-		os.Exit(1)
 	}
 	reflist = slices.Collect(maps.Keys(refs))
 	slices.SortFunc(reflist, func(a, b pdf.Reference) int {
@@ -50,7 +50,7 @@ func main() {
 
 		if obj, err = p.Fetch(ref); err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: %s: %s\n", os.Args[1], err)
-			os.Exit(1)
+			continue
 		}
 		fmt.Printf("\n(#%d,%d) -> ", ref.Number, ref.Generation)
 		dump(p, obj, 0)
@@ -58,6 +58,8 @@ func main() {
 }
 
 func getAllRefs(p *pdf.PDF, refs map[pdf.Reference]struct{}, obj pdf.Object) (err error) {
+	var allerr error
+
 	switch obj := obj.(type) {
 	case pdf.Reference:
 		if _, ok := refs[obj]; ok {
@@ -72,24 +74,24 @@ func getAllRefs(p *pdf.PDF, refs map[pdf.Reference]struct{}, obj pdf.Object) (er
 	case pdf.Dict:
 		for _, v := range obj {
 			if err = getAllRefs(p, refs, v); err != nil {
-				return err
+				allerr = errors.Join(allerr, err)
 			}
 		}
-		return nil
+		return allerr
 	case pdf.Array:
 		for _, v := range obj {
 			if err = getAllRefs(p, refs, v); err != nil {
-				return err
+				allerr = errors.Join(allerr, err)
 			}
 		}
-		return nil
+		return allerr
 	case pdf.Stream:
 		for _, v := range obj.Dict {
 			if err = getAllRefs(p, refs, v); err != nil {
-				return err
+				allerr = errors.Join(allerr, err)
 			}
 		}
-		return nil
+		return allerr
 	default:
 		return nil
 	}
