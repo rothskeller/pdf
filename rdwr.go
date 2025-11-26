@@ -106,6 +106,9 @@ func (p *PDF) Write() (err error) {
 		if _, err = p.wh.Write(pdfHeader); err != nil {
 			return err
 		}
+		if offset, err = p.wh.Seek(0, io.SeekCurrent); err != nil {
+			return err
+		}
 	}
 	for u := range p.updates {
 		updates = append(updates, u)
