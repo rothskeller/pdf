@@ -207,7 +207,7 @@ func (imp *Importer) ImportPage(srcPageNum, destPageNum int) (err error) {
 	return nil
 }
 
-func (imp *Importer) importPage(srcPageNum, destPageNum int, srcPath, destPath Path) (err error) {
+func (imp *Importer) importPage(_, destPageNum int, srcPath, destPath Path) (err error) {
 	var (
 		srcBBox   Rectangle
 		destBBox  Rectangle
@@ -446,14 +446,29 @@ func (imp *Importer) importAnnotation(annotPath, destPath Path, pagenum, annotId
 	default:
 		return fmt.Errorf("%s is %T, not Dict or nil", destPath, obj)
 	}
-	// The lower left corner of the annotation should go at the lower left
-	// corner of the widget rectangle.
-	xm.E = rect.LLX - appBBox.LLX
-	xm.F = rect.LLY - appBBox.LLY
-	// The width and height of the annotation should be scaled to the size
-	// of the widget rectangle.
-	xm.A = (rect.URX - rect.LLX) / (appBBox.URX - appBBox.LLX)
-	xm.D = (rect.URY - rect.LLY) / (appBBox.URY - appBBox.LLY)
+	// The placement and scaling of the annotation is problematic:  the
+	// behavior described in the PDF specification (as best I understand it)
+	// is not what I'm seeing empirically in PDF readers (including
+	// Adobe's).  The transform matrix should simply scale and translate
+	// the annotation BBox to the widget Rect:
+	//   xm.E = rect.LLX - appBBox.LLX
+	//   xm.F = rect.LLY - appBBox.LLY
+	//   xm.A = (rect.URX - rect.LLX) / (appBBox.URX - appBBox.LLX)
+	//   xm.D = (rect.URY - rect.LLY) / (appBBox.URY - appBBox.LLY)
+	// But when the two boxes are different aspect ratios, that doesn't
+	// seem to be what happens.  What actually seems to happen is that both
+	// dimensions are scaled by the factor that should apply to only one of
+	// them.  In the cases I've seen, it's the Y axis, which was also the
+	// shorter axis.  I don't know whether the Y axis or the shortest axis
+	// is correct, but I'm going to assume the latter.
+	xFactor := (rect.URX - rect.LLX) / (appBBox.URX - appBBox.LLX)
+	yFactor := (rect.URY - rect.LLY) / (appBBox.URY - appBBox.LLY)
+	xm.A, xm.D = max(xFactor, yFactor), max(xFactor, yFactor)
+	// Likewise, the translation doesn't seem to be to the origin.  It
+	// seems to "center" the resulting box around the center of the widget
+	// rectangle.
+	xm.E = rect.LLX - appBBox.LLX + ((rect.URX-rect.LLX)-((appBBox.URX-appBBox.LLX)*xm.A))/2
+	xm.F = rect.LLY - appBBox.LLY + ((rect.URY-rect.LLY)-((appBBox.URY-appBBox.LLY)*xm.D))/2
 	// Add content to the destination page to display the annotation.
 	return imp.dest.AddPageContent(pagenum,
 		fmt.Sprintf("q 0 J 1 w 0 j 0 G 0 g %.2f 0 0 %.2f %.2f %.2f cm %s Do Q",
