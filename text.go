@@ -3,6 +3,7 @@ package pdf
 import (
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -86,47 +87,217 @@ type Text struct {
 
 	// lines is the String broken into lines, after any wrapping.
 	lines []string
+	// height is the total vertical height used
+	height float64
 }
 
-// ErrDoesntFit is the error returned by Draw if the text doesn't fit in its
-// Rectangle.  The text was still drawn, either overflowing or clipped to the
-// Rectangle depending on the Clip setting.
-var ErrDoesntFit = errors.New("text does not fit in bounding box")
+// ErrTextRendering returns one or more problems that prevent the text from
+// being rendered faithfully.
+type ErrTextRendering struct {
+	DoesntFitX  bool
+	DoesntFitY  bool
+	IllegalChar bool
+}
 
-// ErrIllegalChar is the error returned by Draw if the text contains a character
-// that cannot be rendered.  The text was still drawn but the offending
-// character(s) were omitted.
-var ErrIllegalChar = errors.New("text contains invalid character")
+func (e ErrTextRendering) Error() string {
+	var s []string
+
+	if e.DoesntFitX {
+		s = append(s, "text is wider than bounding box")
+	}
+	if e.DoesntFitY {
+		s = append(s, "text is taller than bounding box")
+	}
+	if e.IllegalChar {
+		s = append(s, "text contains illegal characters")
+	}
+	return strings.Join(s, "; ")
+}
+
+func (e ErrTextRendering) AsError() error {
+	if e.DoesntFitX || e.DoesntFitY || e.IllegalChar {
+		return e
+	}
+	return nil
+}
+
+func (e *ErrTextRendering) Merge(o ErrTextRendering) {
+	if o.DoesntFitX {
+		e.DoesntFitX = true
+	}
+	if o.DoesntFitY {
+		e.DoesntFitY = true
+	}
+	if o.IllegalChar {
+		e.IllegalChar = true
+	}
+}
+
+// WrapText word-wraps the text as needed to fit into the width of the supplied
+// rectangle.  It makes no changes to the Text object.  It returns the String
+// in word-wrapped form, broken into two strings:  the part that fits
+// vertically in the text rectangle and the part that doesn't.  It returns the
+// resolved font size and any text rendering issues.
+func (t Text) WrapText() (wrappedText, overflowText string, fontSize float64, err error) {
+	var (
+		s             string
+		warnings      ErrTextRendering
+		wrappedLines  []string
+		overflowLines []string
+		fitsX         bool
+	)
+	if s, err = utf8To1252(t.String); err != nil {
+		warnings.IllegalChar = true
+	}
+	if s == "" {
+		return "", "", t.FontSize, warnings.AsError()
+	}
+	if err = t.checkParameters(); err != nil {
+		return "", "", t.FontSize, err
+	}
+	wrappedLines, overflowLines, fontSize, fitsX = t.wrapText(s)
+	wrappedText, _ = charmap.Windows1252.NewDecoder().String(strings.Join(wrappedLines, "\n"))
+	overflowText, _ = charmap.Windows1252.NewDecoder().String(strings.Join(overflowLines, "\n"))
+	if !fitsX {
+		warnings.DoesntFitX = true
+	}
+	if overflowText != "" {
+		warnings.DoesntFitY = true
+	}
+	return wrappedText, overflowText, fontSize, warnings.AsError()
+}
+
+// wrapText wraps the supplied string (in code page 1252 encoding) into lines
+// using the Text's bounding box, font, and font size range.  It returns the
+// set of lines that fit vertically in the bounding box, the set that don't,
+// the resolved font size, and a flag indicating whether all of the lines fit
+// horizontally.
+func (t Text) wrapText(s string) (lines, overflow []string, fontSize float64, fitsX bool) {
+	fontSize = t.FontSize
+	for {
+		lines, overflow, fitsX = t.wrapTextAt(s, fontSize)
+		if fitsX && len(overflow) == 0 {
+			break
+		}
+		if fontSize-0.5 < t.MinFontSize {
+			break
+		}
+		fontSize -= 0.5
+	}
+	return lines, overflow, fontSize, fitsX
+}
+
+// wrapTextAt wraps the supplied string (in code page 1252 encoding) into lines
+// using the Text's bounding box and font and the supplied font size.  It
+// returns the set of lines that fit vertically in the bounding box, the set
+// that don't, and a flag indicating whether all of the lines fit horizontally.
+func (t Text) wrapTextAt(s string, fontSize float64) (lines, overflow []string, fitsX bool) {
+	// Start by assuming it will fit, until we find out otherwise.
+	var width = t.Rectangle.URX - t.Rectangle.LLX
+	var height = t.Rectangle.URY - t.Rectangle.LLY
+	var lh = t.LineHeight * fontSize
+	fitsX = true
+	// Break the string up into lines and handle each one separately.
+	lines = strings.Split(s, "\n")
+	for i := 0; i < len(lines); i++ {
+		var stop = len(lines[i])
+		for {
+			// Measure the line to see if it fits.
+			if w, _, _ := measureText1252(lines[i][:stop], t.Font, fontSize); w > width {
+				// It doesn't fit.  Is there a non-initial run
+				// of spaces in it, such that we can word-wrap?
+				if idx := strings.LastIndexByte(lines[i][:stop], ' '); idx > 0 && t.Wrap {
+					for ; idx > 0 && lines[i][idx-1] == ' '; idx-- {
+					}
+					if idx > 0 {
+						// Yes.  Stop the line at that
+						// point and try again.
+						stop = idx
+						continue
+					}
+				}
+				// Can't word wrap (any further).  The whole
+				// value will not fit.  We'll accept truncating
+				// this line, but we'll still continue laying
+				// out the rest of the lines to do the best we
+				// can.
+				fitsX = false
+			}
+			// If we had to take a tail off the line to word wrap,
+			// put that into the slice as the next line, and remove
+			// it from the current line.
+			var rest int
+			for rest = stop; rest < len(lines[i]) && lines[i][rest] == ' '; rest++ {
+			}
+			if rest < len(lines[i]) {
+				lines = slices.Insert(lines, i+1, lines[i][rest:])
+			}
+			if stop < len(lines[i]) {
+				lines[i] = lines[i][:stop]
+			}
+			// Move on to the next line.
+			break
+		}
+	}
+	// How many lines can fit in the box?
+	linesThatFit := int(math.Floor((height + max(0, lh-fontSize)) / lh))
+	// If we have more than that, move some into overflow.
+	if len(lines) > linesThatFit {
+		lines, overflow = lines[:linesThatFit], lines[linesThatFit:]
+	}
+	return lines, overflow, fitsX
+}
 
 // Draw draws the text into the specified PDF.
 func (t Text) Draw(pdf *PDF) (err error) {
 	var (
+		s        string
+		lines    []string
+		overflow []string
+		fontSize float64
+		align    string
+		fitsX    bool
 		top      float64
 		font     Name
-		warnings error
+		warnings ErrTextRendering
 		content  strings.Builder
 	)
 	if strings.TrimSpace(t.String) == "" {
 		return nil // Streamline special case of empty string.
 	}
-	if t.String, warnings = utf8To1252(t.String); strings.TrimSpace(t.String) == "" {
-		return warnings // nothing survived the conversion
+	if s, err = utf8To1252(t.String); err != nil {
+		warnings.IllegalChar = true
+	}
+	if strings.TrimSpace(s) == "" {
+		return warnings.AsError() // nothing survived the conversion
 	}
 	if err = t.checkParameters(); err != nil {
 		return err
 	}
-	warnings = errors.Join(warnings, t.wrapAndShrink())
-	top = t.top()
+	lines, overflow, fontSize, fitsX = t.wrapText(s)
+	align = t.Align
+	if !fitsX {
+		align = align[:1] + "l"
+		warnings.DoesntFitX = true
+	}
+	if len(overflow) != 0 {
+		align = "t" + align[1:]
+		warnings.DoesntFitY = true
+		if !t.Clip {
+			lines = append(lines, overflow...)
+		}
+	}
+	top = t.top(lines, fontSize, align)
 	if font, err = t.addFont(pdf); err != nil {
 		return err
 	}
-	t.emitSetup(&content, font)
-	t.emitLines(&content, top)
+	t.emitSetup(&content, font, fontSize)
+	t.emitLines(&content, lines, fontSize, top, align)
 	emitCleanup(&content)
 	if err = pdf.AddPageContent(t.Page, content.String()); err != nil {
 		return err
 	}
-	return warnings
+	return warnings.AsError()
 }
 
 func utf8To1252(ustr string) (cp1252 string, err error) {
@@ -135,7 +306,7 @@ func utf8To1252(ustr string) (cp1252 string, err error) {
 		if by, ok := charmap.Windows1252.EncodeRune(r); ok {
 			sb.WriteByte(by)
 		} else {
-			err = ErrIllegalChar
+			err = ErrTextRendering{IllegalChar: true}
 		}
 	}
 	return sb.String(), err
@@ -236,97 +407,6 @@ func (t *Text) checkParameters() error {
 	return nil
 }
 
-// wrapAndShrink wraps the text and shrinks it to fit, if either is requested.
-// The only error return is ErrDoesntFit, if the text cannot be made to fit the
-// bounding box.
-func (t *Text) wrapAndShrink() error {
-	var (
-		fitsX, fitsY bool
-	)
-	for {
-		if fitsX, fitsY = t.fitText(); fitsX && fitsY {
-			break
-		}
-		if t.FontSize-0.5 < t.MinFontSize {
-			break
-		}
-		t.FontSize -= 0.5
-	}
-	if !fitsX {
-		t.Align = t.Align[:1] + "l"
-	}
-	if !fitsY {
-		t.Align = "t" + t.Align[1:]
-	}
-	if !fitsX || !fitsY {
-		return ErrDoesntFit
-	}
-	return nil
-}
-
-// fitText determines whether the string fits in the box at the specified font
-// and size, and how it got word-wrapped in order to fit.
-func (t *Text) fitText() (fitsX, fitsY bool) {
-	// Start by assuming it will fit, until we find out otherwise.
-	var width = t.Rectangle.URX - t.Rectangle.LLX
-	var height = t.Rectangle.URY - t.Rectangle.LLY
-	var lh = t.LineHeight * t.FontSize
-	fitsX, fitsY = true, true
-	// Break the string up into lines and handle each one separately.
-	t.lines = strings.Split(t.String, "\n")
-	for i := 0; i < len(t.lines); i++ {
-		var stop = len(t.lines[i])
-		for {
-			// Measure the line to see if it fits.
-			if w, _, _ := measureText1252(t.lines[i][:stop], t.Font, t.FontSize); w > width {
-				// It doesn't fit.  Is there a non-initial run
-				// of spaces in it, such that we can word-wrap?
-				if idx := strings.LastIndexByte(t.lines[i][:stop], ' '); idx > 0 && t.Wrap {
-					for ; idx > 0 && t.lines[i][idx-1] == ' '; idx-- {
-					}
-					if idx > 0 {
-						// Yes.  Stop the line at that
-						// point and try again.
-						stop = idx
-						continue
-					}
-				}
-				// Can't word wrap (any further).  The whole
-				// value will not fit.  We'll accept truncating
-				// this line, but we'll still continue laying
-				// out the rest of the lines to do the best we
-				// can.
-				fitsX = false
-			}
-			// Remove the line's vertical size from bbox.
-			height -= lh
-			// If we had to take a tail off the line to word wrap,
-			// put that into the slice as the next line, and remove
-			// it from the current line.
-			var rest int
-			for rest = stop; rest < len(t.lines[i]) && t.lines[i][rest] == ' '; rest++ {
-			}
-			if rest < len(t.lines[i]) {
-				t.lines = slices.Insert(t.lines, i+1, t.lines[i][rest:])
-			}
-			if stop < len(t.lines[i]) {
-				t.lines[i] = t.lines[i][:stop]
-			}
-			// Move on to the next line.
-			break
-		}
-	}
-	// For the last line, use the minimum of the font height and the line
-	// height.
-	height = height + lh - min(lh, t.FontSize)
-	// Did the value fit vertically?
-	if height < 0 {
-		fitsY = false
-	}
-	// Return the result.
-	return fitsX, fitsY
-}
-
 // "top" aligns the top of the actual text content (i.e., the tallest ascender
 // of the top line) to the top of the rectangle.  "center" aligns the center of
 // the actual text content to the center of the rectangle, i.e., the top of the
@@ -344,24 +424,24 @@ func (t *Text) fitText() (fitsX, fitsY bool) {
 
 // top figures out where to start vertically.  It returns the Y-coordinate of
 // the baseline of the first line of text.
-func (t *Text) top() (bl1 float64) {
+func (t *Text) top(lines []string, fontSize float64, align string) (bl1 float64) {
 	var habove, hbelow, height float64
 
 	// For uppercase, use the font metrics for top line ascender and bottom
 	// line descender.  For lowercase, use the actual line contents.
-	if t.Align[0] < 'a' {
-		habove, hbelow = FontMetrics(t.Font, t.FontSize)
+	if align[0] < 'a' {
+		habove, hbelow = FontMetrics(t.Font, fontSize)
 	} else {
-		_, habove, _ = measureText1252(t.lines[0], t.Font, t.FontSize)
-		_, _, hbelow = measureText1252(t.lines[len(t.lines)-1], t.Font, t.FontSize)
+		_, habove, _ = measureText1252(lines[0], t.Font, fontSize)
+		_, _, hbelow = measureText1252(lines[len(lines)-1], t.Font, fontSize)
 	}
 	// In either case, use the line height for all intervening lines.
-	height = float64(len(t.lines)-1)*t.LineHeight*t.FontSize + habove + hbelow
+	height = float64(len(lines)-1)*t.LineHeight*fontSize + habove + hbelow
 	// Compute the baseline of the first line.
 	if t.Baseline != 0 {
 		bl1 = t.Baseline
 	} else {
-		switch t.Align[0] {
+		switch align[0] {
 		case 'T', 't':
 			bl1 = t.Rectangle.URY - habove
 		case 'M', 'm':
@@ -374,20 +454,18 @@ func (t *Text) top() (bl1 float64) {
 	}
 	// For verifying that it fits within the rectangle, we always want to
 	// use the actual line contents, even if we weren't before.
-	if t.Align[0] < 'a' {
-		_, habove, _ = measureText1252(t.lines[0], t.Font, t.FontSize)
-		_, _, hbelow = measureText1252(t.lines[len(t.lines)-1], t.Font, t.FontSize)
-		height = float64(len(t.lines)-1)*t.LineHeight*t.FontSize + habove + hbelow
+	if align[0] < 'a' {
+		_, habove, _ = measureText1252(lines[0], t.Font, fontSize)
+		_, _, hbelow = measureText1252(lines[len(lines)-1], t.Font, fontSize)
+		height = float64(len(lines)-1)*t.LineHeight*fontSize + habove + hbelow
 	}
 	// If the result extends below the bottom of the rectangle, shift it up.
 	if bl1+habove-height < t.Rectangle.LLY {
 		bl1 = t.Rectangle.LLY + height - habove
-		println("shifting ", t.lines[0], " up")
 	}
 	// If the result extends above the top of the rectangle, shift it down.
 	if bl1+habove > t.Rectangle.URY {
 		bl1 = t.Rectangle.URY - habove
-		println("shifting ", t.lines[0], " down")
 	}
 	return bl1
 }
@@ -445,7 +523,7 @@ func (t *Text) addFont(pdf *PDF) (name Name, err error) {
 
 // emitSetup emits all of the preliminary content instructions before writing
 // the lines.
-func (t *Text) emitSetup(sb *strings.Builder, font Name) {
+func (t *Text) emitSetup(sb *strings.Builder, font Name, fontSize float64) {
 	sb.WriteString("q")
 	if t.Clip {
 		fmt.Fprintf(sb, " %.2f %.2f %.2f %.2f re W n",
@@ -455,31 +533,33 @@ func (t *Text) emitSetup(sb *strings.Builder, font Name) {
 	if t.Color[0] != 0 || t.Color[1] != 0 || t.Color[2] != 0 {
 		fmt.Fprintf(sb, " %.2f %.2f %.2f rg", float64(t.Color[0])/255, float64(t.Color[1])/255, float64(t.Color[2])/255)
 	}
-	fmt.Fprintf(sb, " BT %s %.2f Tf", EncodeName(font), t.FontSize)
+	fmt.Fprintf(sb, " BT %s %.2f Tf", EncodeName(font), fontSize)
 }
 
 // emitLines emits all of the lines of text.
-func (t *Text) emitLines(sb *strings.Builder, top float64) {
+func (t *Text) emitLines(sb *strings.Builder, lines []string, fontSize, top float64, align string) {
 	var (
 		prevLeft float64
 		yOffset  = top
 	)
-	for _, line := range t.lines {
+	for _, line := range lines {
 		var left float64
-
-		switch t.Align[1] {
+		width, _, hbelow := measureText1252(line, t.Font, fontSize)
+		if top-hbelow < t.Rectangle.LLY && t.Clip {
+			return
+		}
+		switch align[1] {
 		case 'c':
-			width, _, _ := measureText1252(line, t.Font, t.FontSize)
 			left = (t.Rectangle.LLX+t.Rectangle.URX)/2 - width/2
 		case 'r':
-			width, _, _ := measureText1252(line, t.Font, t.FontSize)
 			left = t.Rectangle.URX - width
 		default: // 'l'
 			left = t.Rectangle.LLX
 		}
 		fmt.Fprintf(sb, " %.2f %.2f Td %s Tj", left-prevLeft, yOffset, EncodeString(line))
 		prevLeft = left
-		yOffset = -t.FontSize * t.LineHeight
+		yOffset = -fontSize * t.LineHeight
+		top += yOffset
 	}
 }
 

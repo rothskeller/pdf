@@ -1,6 +1,7 @@
 package pdf
 
 import (
+	"errors"
 	"slices"
 	"strings"
 )
@@ -139,6 +140,10 @@ func (t *Table) Size() (width, height float64) {
 	return width, height
 }
 
+// ErrTableSize is an error returned when the contents of the table do not fit
+// in the available space.
+var ErrTableSize = errors.New("table does not fit in bounding box")
+
 // Draw draws a table.  The table Rectangle is left encapsulating the space used
 // by the table.  If the table doesn't fit on the page, nothing is drawn and
 // ErrDoesntFit is returned.
@@ -160,7 +165,7 @@ func (t *Table) Draw(pdf *PDF) (err error) {
 	twidth += 2*t.TableBorderWidth + float64(len(t.widths)-1)*t.CellBorderWidth
 	theight += 2*t.TableBorderWidth + float64(len(t.heights)-1)*t.CellBorderWidth
 	if theight > t.Rectangle.URY-t.Rectangle.LLY || twidth > t.Rectangle.URX-t.Rectangle.LLX {
-		return ErrDoesntFit
+		return ErrTableSize
 	}
 	// Compute the table position.
 	switch {

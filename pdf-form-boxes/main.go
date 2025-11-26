@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -113,6 +114,8 @@ ERROR:
 }
 
 func markRect(pagenum int, rect pdf.Rectangle, title string, out *pdf.PDF) (err error) {
+	var etr pdf.ErrTextRendering
+
 	boxno++
 	fmt.Printf("Box %2d: P %d L %6.2f R %6.2f B %6.2f T %6.2f  //  %s\n",
 		boxno, pagenum, rect.LLX, rect.URX, rect.LLY, rect.URY, title)
@@ -129,12 +132,14 @@ func markRect(pagenum int, rect pdf.Rectangle, title string, out *pdf.PDF) (err 
 		Rectangle: pdf.RectangleRT(rect.LLX+1, rect.LLY, rect.URX, rect.URY-1),
 		FontSize:  8,
 		VAlign:    "top",
-	}).Draw(out); err != nil && err != pdf.ErrDoesntFit {
+	}).Draw(out); err != nil && !errors.As(err, &etr) {
 		return err
 	}
 	return nil
 }
 func markRadio(pagenum int, rect pdf.Rectangle, title string, out *pdf.PDF) (err error) {
+	var etr pdf.ErrTextRendering
+
 	boxno++
 	fmt.Printf("Box %2d: P %d X %6.2f Y %6.2f R 2  //  %s\n",
 		boxno, pagenum, (rect.LLX+rect.URX)/2, (rect.LLY+rect.URY)/2, title)
@@ -152,7 +157,7 @@ func markRadio(pagenum int, rect pdf.Rectangle, title string, out *pdf.PDF) (err
 		Rectangle: pdf.RectangleRT(rect.LLX, rect.LLY-9, rect.LLX+20, rect.LLY-1),
 		FontSize:  8,
 		VAlign:    "top",
-	}).Draw(out); err != nil && err != pdf.ErrDoesntFit {
+	}).Draw(out); err != nil && !errors.As(err, &etr) {
 		return err
 	}
 	return nil
