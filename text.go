@@ -545,7 +545,7 @@ func (t *Text) emitLines(sb *strings.Builder, lines []string, fontSize, top floa
 	for _, line := range lines {
 		var left float64
 		width, _, hbelow := measureText1252(line, t.Font, fontSize)
-		if top-hbelow < t.Rectangle.LLY && t.Clip {
+		if top-hbelow < t.Rectangle.LLY-0.1 && t.Clip {
 			return
 		}
 		switch align[1] {
