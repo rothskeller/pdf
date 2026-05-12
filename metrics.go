@@ -229,10 +229,6 @@ var metrics = map[string]*fontMetrics{
 			{600, -157, 629}, // thorn
 			{600, -157, 620}, // ydieresis
 		},
-		ligatures: map[[2]byte]charMetrics{
-			{102, 105}: {600, 0, 629},
-			{102, 108}: {600, 0, 629},
-		},
 		habove: 805,
 		hbelow: 250,
 	},
@@ -463,10 +459,6 @@ var metrics = map[string]*fontMetrics{
 			{600, -142, 626}, // thorn
 			{600, -142, 638}, // ydieresis
 		},
-		ligatures: map[[2]byte]charMetrics{
-			{102, 105}: {600, 0, 626},
-			{102, 108}: {600, 0, 626},
-		},
 		habove: 801,
 		hbelow: 250,
 	},
@@ -696,10 +688,6 @@ var metrics = map[string]*fontMetrics{
 			{600, -157, 672}, // yacute
 			{600, -157, 629}, // thorn
 			{600, -157, 620}, // ydieresis
-		},
-		ligatures: map[[2]byte]charMetrics{
-			{102, 105}: {600, 0, 629},
-			{102, 108}: {600, 0, 629},
 		},
 		habove: 805,
 		hbelow: 250,

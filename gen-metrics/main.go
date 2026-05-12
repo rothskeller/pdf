@@ -51,6 +51,7 @@ func generateFontMetrics(out *os.File, font string) {
 		kps    [][]int
 		habove int
 		hbelow int
+		nolpkp bool
 		err    error
 	)
 	if fm, err = os.Open("../standard-fonts/font_metrics/" + font + ".afm"); err != nil {
@@ -61,7 +62,11 @@ func generateFontMetrics(out *os.File, font string) {
 	scan = bufio.NewScanner(fm)
 	cms = make(map[string]charMetrics)
 	for scan.Scan() {
-		if strings.HasPrefix(scan.Text(), "StartCharMetrics ") {
+		line := scan.Text()
+		if strings.HasPrefix(line, "IsFixedPitch") && strings.Contains(line, "true") {
+			nolpkp = true
+		}
+		if strings.HasPrefix(line, "StartCharMetrics ") {
 			break
 		}
 	}
@@ -79,13 +84,16 @@ func generateFontMetrics(out *os.File, font string) {
 			cm[1], _ = strconv.Atoi(match[3])
 			cm[2], _ = strconv.Atoi(match[4])
 			cms[match[2]] = cm
-			if match[5] != "" {
+			if match[5] != "" && !nolpkp {
 				for _, lig := range strings.Split(strings.TrimRight(match[5], ";"), ";") {
 					fields := strings.Fields(lig)
 					ligs = append(ligs, []string{match[2], fields[1], fields[2]})
 				}
 			}
 		}
+	}
+	if nolpkp {
+		goto noKern
 	}
 	for scan.Scan() {
 		line := scan.Text()
