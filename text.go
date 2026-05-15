@@ -5,10 +5,7 @@ import (
 	"fmt"
 	"math"
 	"slices"
-	"strconv"
 	"strings"
-
-	"golang.org/x/text/encoding/charmap"
 )
 
 // Text is a structure containing all of the parameters for drawing a text
@@ -29,8 +26,8 @@ type Text struct {
 	// or VAlign.
 	Baseline float64
 	// Font is the name of font in which the string should be drawn.  It
-	// must be either "Courier", "Helvetica", or "Times-Roman".  Default is
-	// "Helvetica".
+	// must be "Courier", "Helvetica", "Times-Roman", "Go", or "Go Mono".
+	// Default is "Helvetica".
 	Font string
 	// FontSize is the starting and maximum size of the font with which the
 	// string should be drawn.  Default 12.0.
@@ -85,6 +82,8 @@ type Text struct {
 	// past its boundaries.
 	Clip bool
 
+	// fh is the font handler.
+	fh fontHandler
 	// lines is the String broken into lines, after any wrapping.
 	lines []string
 	// height is the total vertical height used
@@ -145,19 +144,20 @@ func (t Text) WrapText() (wrappedText, overflowText string, fontSize float64, er
 		wrappedLines  []string
 		overflowLines []string
 		fitsX         bool
+		ok            bool
 	)
-	if s, err = utf8To1252(t.String); err != nil {
+	if err = t.checkParameters(); err != nil {
+		return "", "", t.FontSize, err
+	}
+	if s, ok = t.fh.replaceInvalidChars(t.String); !ok {
 		warnings.IllegalChar = true
 	}
 	if s == "" {
 		return "", "", t.FontSize, warnings.AsError()
 	}
-	if err = t.checkParameters(); err != nil {
-		return "", "", t.FontSize, err
-	}
 	wrappedLines, overflowLines, fontSize, fitsX = t.wrapText(s)
-	wrappedText, _ = charmap.Windows1252.NewDecoder().String(strings.Join(wrappedLines, "\n"))
-	overflowText, _ = charmap.Windows1252.NewDecoder().String(strings.Join(overflowLines, "\n"))
+	wrappedText = strings.Join(wrappedLines, "\n")
+	overflowText = strings.Join(overflowLines, "\n")
 	if !fitsX {
 		warnings.DoesntFitX = true
 	}
@@ -167,11 +167,10 @@ func (t Text) WrapText() (wrappedText, overflowText string, fontSize float64, er
 	return wrappedText, overflowText, fontSize, warnings.AsError()
 }
 
-// wrapText wraps the supplied string (in code page 1252 encoding) into lines
-// using the Text's bounding box, font, and font size range.  It returns the
-// set of lines that fit vertically in the bounding box, the set that don't,
-// the resolved font size, and a flag indicating whether all of the lines fit
-// horizontally.
+// wrapText wraps the supplied string into lines using the Text's bounding box,
+// font, and font size range.  It returns the set of lines that fit vertically
+// in the bounding box, the set that don't, the resolved font size, and a flag
+// indicating whether all of the lines fit horizontally.
 func (t Text) wrapText(s string) (lines, overflow []string, fontSize float64, fitsX bool) {
 	fontSize = t.FontSize
 	for {
@@ -187,10 +186,10 @@ func (t Text) wrapText(s string) (lines, overflow []string, fontSize float64, fi
 	return lines, overflow, fontSize, fitsX
 }
 
-// wrapTextAt wraps the supplied string (in code page 1252 encoding) into lines
-// using the Text's bounding box and font and the supplied font size.  It
-// returns the set of lines that fit vertically in the bounding box, the set
-// that don't, and a flag indicating whether all of the lines fit horizontally.
+// wrapTextAt wraps the supplied string into lines using the Text's bounding box
+// and font and the supplied font size.  It returns the set of lines that fit
+// vertically in the bounding box, the set that don't, and a flag indicating
+// whether all of the lines fit horizontally.
 func (t Text) wrapTextAt(s string, fontSize float64) (lines, overflow []string, fitsX bool) {
 	// Start by assuming it will fit, until we find out otherwise.
 	var width = t.Rectangle.URX - t.Rectangle.LLX
@@ -203,7 +202,7 @@ func (t Text) wrapTextAt(s string, fontSize float64) (lines, overflow []string, 
 		var stop = len(lines[i])
 		for {
 			// Measure the line to see if it fits.
-			if w, _, _ := measureText1252(lines[i][:stop], t.Font, fontSize); w > width {
+			if w, _, _ := measureText(lines[i][:stop], t.fh, fontSize); w > width {
 				// It doesn't fit.  Is there a non-initial run
 				// of spaces in it, such that we can word-wrap?
 				if idx := strings.LastIndexByte(lines[i][:stop], ' '); idx > 0 && t.Wrap {
@@ -261,18 +260,19 @@ func (t Text) Draw(pdf *PDF) (err error) {
 		font     Name
 		warnings ErrTextRendering
 		content  strings.Builder
+		ok       bool
 	)
+	if err = t.checkParameters(); err != nil {
+		return err
+	}
 	if strings.TrimSpace(t.String) == "" {
 		return nil // Streamline special case of empty string.
 	}
-	if s, err = utf8To1252(t.String); err != nil {
+	if s, ok = t.fh.replaceInvalidChars(t.String); !ok {
 		warnings.IllegalChar = true
 	}
 	if strings.TrimSpace(s) == "" {
 		return warnings.AsError() // nothing survived the conversion
-	}
-	if err = t.checkParameters(); err != nil {
-		return err
 	}
 	lines, overflow, fontSize, fitsX = t.wrapText(s)
 	align = t.Align
@@ -300,18 +300,6 @@ func (t Text) Draw(pdf *PDF) (err error) {
 	return warnings.AsError()
 }
 
-func utf8To1252(ustr string) (cp1252 string, err error) {
-	var sb strings.Builder
-	for _, r := range ustr {
-		if by, ok := charmap.Windows1252.EncodeRune(r); ok {
-			sb.WriteByte(by)
-		} else {
-			err = ErrTextRendering{IllegalChar: true}
-		}
-	}
-	return sb.String(), err
-}
-
 func (t *Text) checkParameters() error {
 	// Check parameters and apply defaults.
 	if t.Rectangle.LLX >= t.Rectangle.URX || t.Rectangle.LLY >= t.Rectangle.URY {
@@ -327,8 +315,9 @@ func (t *Text) checkParameters() error {
 	}
 	if t.Font == "" {
 		t.Font = "Helvetica"
-	} else if _, ok := metrics[t.Font]; !ok {
-		return errors.New("invalid Font (no metrics)")
+	}
+	if t.fh = fontHandlers[t.Font]; t.fh == nil {
+		return errors.New("invalid Font")
 	}
 	if t.FontSize == 0 {
 		t.FontSize = 12.0
@@ -432,8 +421,8 @@ func (t *Text) top(lines []string, fontSize float64, align string) (bl1 float64)
 	if align[0] < 'a' {
 		habove, hbelow = FontMetrics(t.Font, fontSize)
 	} else {
-		_, habove, _ = measureText1252(lines[0], t.Font, fontSize)
-		_, _, hbelow = measureText1252(lines[len(lines)-1], t.Font, fontSize)
+		_, habove, _ = measureText(lines[0], t.fh, fontSize)
+		_, _, hbelow = measureText(lines[len(lines)-1], t.fh, fontSize)
 	}
 	// In either case, use the line height for all intervening lines.
 	height = float64(len(lines)-1)*t.LineHeight*fontSize + habove + hbelow
@@ -455,8 +444,8 @@ func (t *Text) top(lines []string, fontSize float64, align string) (bl1 float64)
 	// For verifying that it fits within the rectangle, we always want to
 	// use the actual line contents, even if we weren't before.
 	if align[0] < 'a' {
-		_, habove, _ = measureText1252(lines[0], t.Font, fontSize)
-		_, _, hbelow = measureText1252(lines[len(lines)-1], t.Font, fontSize)
+		_, habove, _ = measureText(lines[0], t.fh, fontSize)
+		_, _, hbelow = measureText(lines[len(lines)-1], t.fh, fontSize)
 		height = float64(len(lines)-1)*t.LineHeight*fontSize + habove + hbelow
 	}
 	// If the result extends below the bottom of the rectangle, shift it up.
@@ -474,9 +463,8 @@ func (t *Text) top(lines []string, fontSize float64, align string) (bl1 float64)
 // returns the name by which it's known there.
 func (t *Text) addFont(pdf *PDF) (name Name, err error) {
 	var (
-		fonts  Dict
-		maxnum int
-		path   Path
+		fonts Dict
+		path  Path
 	)
 	if path, err = pdf.PagePath(t.Page); err != nil {
 		return "", err
@@ -492,28 +480,8 @@ func (t *Text) addFont(pdf *PDF) (name Name, err error) {
 	default:
 		return "", fmt.Errorf("%s is %T, not Dict or nil", path, obj)
 	}
-	for n := range fonts {
-		if font, err := pdf.GetDict(path.K(n)); err != nil {
-			return "", err
-		} else if font["Type"] == Name("Font") &&
-			font["Subtype"] == Name("Type1") &&
-			font["BaseFont"] == Name(t.Font) &&
-			font["Encoding"] == Name("WinAnsiEncoding") {
-			return n, nil
-		}
-		if strings.HasPrefix(string(n), "F") {
-			if num, err := strconv.Atoi(string(n[1:])); err == nil {
-				maxnum = max(maxnum, num)
-			}
-		}
-	}
-	// Not found, need to add it.
-	name = Name(fmt.Sprintf("F%d", maxnum+1))
-	fonts[name] = Dict{
-		"Type":     Name("Font"),
-		"Subtype":  Name("Type1"),
-		"BaseFont": Name(t.Font),
-		"Encoding": Name("WinAnsiEncoding"),
+	if name, err = t.fh.addFontToPageResources(pdf, path, fonts); err != nil {
+		return "", err
 	}
 	if err = pdf.Set(path, fonts); err != nil {
 		return "", err
@@ -544,7 +512,7 @@ func (t *Text) emitLines(sb *strings.Builder, lines []string, fontSize, top floa
 	)
 	for _, line := range lines {
 		var left float64
-		width, _, hbelow := measureText1252(line, t.Font, fontSize)
+		width, _, hbelow := measureText(line, t.fh, fontSize)
 		if top-hbelow < t.Rectangle.LLY-0.1 && t.Clip {
 			return
 		}
@@ -556,7 +524,7 @@ func (t *Text) emitLines(sb *strings.Builder, lines []string, fontSize, top floa
 		default: // 'l'
 			left = t.Rectangle.LLX
 		}
-		fmt.Fprintf(sb, " %.2f %.2f Td %s Tj", left-prevLeft, yOffset, EncodeString(line))
+		fmt.Fprintf(sb, " %.2f %.2f Td %s Tj", left-prevLeft, yOffset, t.fh.encodeString(line))
 		prevLeft = left
 		yOffset = -fontSize * t.LineHeight
 		top += yOffset
@@ -573,47 +541,19 @@ func emitCleanup(sb *strings.Builder) { sb.WriteString(" ET Q") }
 // recognized (i.e., not in Windows-1252 encoding) are ignored.  The function
 // returns zeros if the font is not known.
 func MeasureText(s, font string, size float64) (width, habove, hbelow float64) {
-	s, _ = utf8To1252(s)
-	return measureText1252(s, font, size)
-}
-
-// measureText1252 returns the metrics of the specified string in the specified
-// font at the specified size: specifically, the width, the height above the
-// baseline, and the height below the baseline.  The string must not contain
-// control characters, and must use Windows-1252 encoding.  The function returns
-// zeros if the font is not known.
-func measureText1252(s, font string, size float64) (width, habove, hbelow float64) {
-	w, ha, hb := measure(s, font)
+	fh := fontHandlers[font]
+	if fh == nil {
+		return 0, 0, 0
+	}
+	s, _ = fh.replaceInvalidChars(s)
+	w, ha, hb := fh.measure(s)
 	return float64(w) * size / 1000.0, float64(ha) * size / 1000.0, float64(hb) * size / 1000.0
 }
 
-func measure(s, font string) (width, habove, hbelow int) {
-	fm := metrics[font]
-	if fm == nil {
-		return 0, 0, 0
-	}
-	for s != "" {
-		var cm [3]int16
-		if len(s) > 1 {
-			var key = [2]byte{s[0], s[1]}
-			if cm = fm.ligatures[key]; cm[0] != 0 {
-				s = s[2:]
-			}
-			if cm[0] == 0 {
-				width += int(fm.kernpairs[key])
-			}
-		}
-		if cm[0] == 0 && s[0] >= 32 {
-			cm = fm.chars[s[0]-32]
-			s = s[1:]
-		} else if cm[0] == 0 {
-			cm = fm.chars['x'-32]
-			s = s[1:]
-		}
-		width += int(cm[0])
-		hbelow = min(hbelow, int(cm[1]))
-		habove = max(habove, int(cm[2]))
-	}
-	hbelow = -hbelow
-	return
+// measureText returns the metrics of the specified string in the specified
+// font at the specified size: specifically, the width, the height above the
+// baseline, and the height below the baseline.
+func measureText(s string, fh fontHandler, size float64) (width, habove, hbelow float64) {
+	w, ha, hb := fh.measure(s)
+	return float64(w) * size / 1000.0, float64(ha) * size / 1000.0, float64(hb) * size / 1000.0
 }
