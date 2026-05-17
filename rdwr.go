@@ -89,9 +89,14 @@ func (p *PDF) Write() (err error) {
 	var (
 		offset  int64
 		xref    int64
-		updates = make([]Reference, 0, len(p.updates))
-		offsets = make([]int, len(p.updates))
+		updates []Reference
+		offsets []int
 	)
+	for _, ttf := range p.ttfs {
+		ttf.tf.resolveBeforeWrite(p)
+	}
+	updates = make([]Reference, 0, len(p.updates))
+	offsets = make([]int, len(p.updates))
 	if len(p.updates) == 0 {
 		return nil
 	}
@@ -219,7 +224,7 @@ func writeRawObject(wr io.Writer, obj Object) (err error) {
 	case Reference:
 		_, err = fmt.Fprintf(wr, "%d %d R", obj.Number, obj.Generation)
 	default:
-		return errors.New("unsupported object type")
+		return fmt.Errorf("unsupported object type %T", obj)
 	}
 	return err
 }

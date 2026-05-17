@@ -46,15 +46,17 @@ type Reference struct {
 
 // A PDF is a reference to a PDF file.
 type PDF struct {
-	rh      Reader
-	wh      io.WriteSeeker
-	start   int
-	xref    []any
-	Info    Dict
-	Catalog Dict
-	Trailer Dict
-	updates map[Reference]Object
-	pages   []Path
+	rh        Reader
+	wh        io.WriteSeeker
+	start     int
+	xref      []any
+	Info      Dict
+	Catalog   Dict
+	Trailer   Dict
+	updates   map[Reference]Object
+	pages     []Path
+	ttfs      map[string]*ttfInPDF
+	toUnicode Reference
 }
 
 // A Rectangle specifies a rectangle, in terms of its lower left and upper

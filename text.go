@@ -292,7 +292,7 @@ func (t Text) Draw(pdf *PDF) (err error) {
 		return err
 	}
 	t.emitSetup(&content, font, fontSize)
-	t.emitLines(&content, lines, fontSize, top, align)
+	t.emitLines(pdf, &content, lines, fontSize, top, align)
 	emitCleanup(&content)
 	if err = pdf.AddPageContent(t.Page, content.String()); err != nil {
 		return err
@@ -316,6 +316,7 @@ func (t *Text) checkParameters() error {
 	if t.Font == "" {
 		t.Font = "Helvetica"
 	}
+	t.Font = strings.ReplaceAll(t.Font, " ", "")
 	if t.fh = fontHandlers[t.Font]; t.fh == nil {
 		return errors.New("invalid Font")
 	}
@@ -505,7 +506,7 @@ func (t *Text) emitSetup(sb *strings.Builder, font Name, fontSize float64) {
 }
 
 // emitLines emits all of the lines of text.
-func (t *Text) emitLines(sb *strings.Builder, lines []string, fontSize, top float64, align string) {
+func (t *Text) emitLines(pdf *PDF, sb *strings.Builder, lines []string, fontSize, top float64, align string) {
 	var (
 		prevLeft float64
 		yOffset  = top
@@ -524,7 +525,7 @@ func (t *Text) emitLines(sb *strings.Builder, lines []string, fontSize, top floa
 		default: // 'l'
 			left = t.Rectangle.LLX
 		}
-		fmt.Fprintf(sb, " %.2f %.2f Td %s Tj", left-prevLeft, yOffset, t.fh.encodeString(line))
+		fmt.Fprintf(sb, " %.2f %.2f Td %s Tj", left-prevLeft, yOffset, t.fh.encodeString(pdf, line))
 		prevLeft = left
 		yOffset = -fontSize * t.LineHeight
 		top += yOffset
