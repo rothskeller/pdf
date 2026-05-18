@@ -22,7 +22,7 @@ type fontHandler interface {
 	// replaceInvalidChars ensures that all characters in the supplied
 	// string are valid for the font.  It returns a possibly-adjusted
 	// string, and a flag indicating whether the original string was OK.
-	replaceInvalidChars(s string) (out string, ok bool)
+	replaceInvalidChars(s string, allowNewline bool) (out string, ok bool)
 	// measure returns the measurement of the string in the font, which must
 	// be a single line.  The string must contain only characters valid for
 	// the font (e.g., replaceInvalidChars returned it).  The return values
@@ -83,12 +83,14 @@ type standardFontMetrics struct {
 }
 type charMetrics [3]int16
 
-func (sf standardFontHandler) replaceInvalidChars(s string) (out string, ok bool) {
+func (sf standardFontHandler) replaceInvalidChars(s string, allowNewline bool) (out string, ok bool) {
 	var sb strings.Builder
 
 	ok = true
 	for _, r := range s {
-		if r < 32 {
+		if r == 10 && allowNewline {
+			sb.WriteRune(r)
+		} else if r < 32 {
 			ok = false
 		} else if _, ok := charmap.Windows1252.EncodeRune(r); ok {
 			sb.WriteRune(r)
@@ -506,9 +508,9 @@ func (tf *trueTypeFontHandler) metrics() (habove int, hbelow int) {
 	return tf.ascent, tf.descent
 }
 
-func (tf *trueTypeFontHandler) replaceInvalidChars(s string) (out string, ok bool) {
+func (tf *trueTypeFontHandler) replaceInvalidChars(s string, allowNewline bool) (out string, ok bool) {
 	ok = strings.IndexFunc(s, func(r rune) bool {
-		return tf.rune2glyph[r] == 0
+		return tf.rune2glyph[r] == 0 && (r != 10 || !allowNewline)
 	}) < 0
 	return s, ok
 }

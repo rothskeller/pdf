@@ -149,7 +149,7 @@ func (t Text) WrapText() (wrappedText, overflowText string, fontSize float64, er
 	if err = t.checkParameters(); err != nil {
 		return "", "", t.FontSize, err
 	}
-	if s, ok = t.fh.replaceInvalidChars(t.String); !ok {
+	if s, ok = t.fh.replaceInvalidChars(t.String, true); !ok {
 		warnings.IllegalChar = true
 	}
 	if s == "" {
@@ -268,7 +268,7 @@ func (t Text) Draw(pdf *PDF) (err error) {
 	if strings.TrimSpace(t.String) == "" {
 		return nil // Streamline special case of empty string.
 	}
-	if s, ok = t.fh.replaceInvalidChars(t.String); !ok {
+	if s, ok = t.fh.replaceInvalidChars(t.String, true); !ok {
 		warnings.IllegalChar = true
 	}
 	if strings.TrimSpace(s) == "" {
@@ -546,7 +546,7 @@ func MeasureText(s, font string, size float64) (width, habove, hbelow float64) {
 	if fh == nil {
 		return 0, 0, 0
 	}
-	s, _ = fh.replaceInvalidChars(s)
+	s, _ = fh.replaceInvalidChars(s, false)
 	w, ha, hb := fh.measure(s)
 	return float64(w) * size / 1000.0, float64(ha) * size / 1000.0, float64(hb) * size / 1000.0
 }
