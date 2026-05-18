@@ -249,6 +249,13 @@ func (t Text) wrapTextAt(s string, fontSize float64) (lines, overflow []string, 
 
 // Draw draws the text into the specified PDF.
 func (t Text) Draw(pdf *PDF) (err error) {
+	_, err = t.DrawRect(pdf)
+	return err
+}
+
+// DrawRect is like Draw, but it returns the Rectangle actually consumed by the
+// draw operation.
+func (t Text) DrawRect(pdf *PDF) (consumed Rectangle, err error) {
 	var (
 		s        string
 		lines    []string
@@ -263,16 +270,20 @@ func (t Text) Draw(pdf *PDF) (err error) {
 		ok       bool
 	)
 	if err = t.checkParameters(); err != nil {
-		return err
+		return consumed, err
 	}
+	consumed = RectangleWH(t.Rectangle.LLX, t.Rectangle.URY, 0, 0)
 	if strings.TrimSpace(t.String) == "" {
-		return nil // Streamline special case of empty string.
+		return consumed, nil // Streamline special case of empty string.
 	}
 	if s, ok = t.fh.replaceInvalidChars(t.String, true); !ok {
 		warnings.IllegalChar = true
 	}
 	if strings.TrimSpace(s) == "" {
-		return warnings.AsError() // nothing survived the conversion
+		return consumed, warnings.AsError() // nothing survived the conversion
+	}
+	if font, err = t.addFont(pdf); err != nil {
+		return consumed, err
 	}
 	lines, overflow, fontSize, fitsX = t.wrapText(s)
 	align = t.Align
@@ -288,16 +299,21 @@ func (t Text) Draw(pdf *PDF) (err error) {
 		}
 	}
 	top = t.top(lines, fontSize, align)
-	if font, err = t.addFont(pdf); err != nil {
-		return err
+	consumed.LLY, consumed.URY = top, top
+	switch align[1] {
+	case 'c':
+		consumed.LLX = (t.Rectangle.LLX + t.Rectangle.URX) / 2
+	case 'r':
+		consumed.LLX = t.Rectangle.URX
 	}
+	consumed.URX = consumed.LLX
 	t.emitSetup(&content, font, fontSize)
-	t.emitLines(pdf, &content, lines, fontSize, top, align)
+	t.emitLines(pdf, &content, lines, fontSize, top, align, &consumed)
 	emitCleanup(&content)
 	if err = pdf.AddPageContent(t.Page, content.String()); err != nil {
-		return err
+		return consumed, err
 	}
-	return warnings.AsError()
+	return consumed, warnings.AsError()
 }
 
 func (t *Text) checkParameters() error {
@@ -506,7 +522,7 @@ func (t *Text) emitSetup(sb *strings.Builder, font Name, fontSize float64) {
 }
 
 // emitLines emits all of the lines of text.
-func (t *Text) emitLines(pdf *PDF, sb *strings.Builder, lines []string, fontSize, top float64, align string) {
+func (t *Text) emitLines(pdf *PDF, sb *strings.Builder, lines []string, fontSize, top float64, align string, consumed *Rectangle) {
 	var (
 		prevLeft float64
 		yOffset  = top
@@ -520,13 +536,18 @@ func (t *Text) emitLines(pdf *PDF, sb *strings.Builder, lines []string, fontSize
 		switch align[1] {
 		case 'c':
 			left = (t.Rectangle.LLX+t.Rectangle.URX)/2 - width/2
+			consumed.LLX = min(consumed.LLX, left)
+			consumed.URX = max(consumed.URX, left+width)
 		case 'r':
 			left = t.Rectangle.URX - width
+			consumed.LLX = min(consumed.LLX, left)
 		default: // 'l'
 			left = t.Rectangle.LLX
+			consumed.URX = max(consumed.URX, left+width)
 		}
 		fmt.Fprintf(sb, " %.2f %.2f Td %s Tj", left-prevLeft, yOffset, t.fh.encodeString(pdf, line))
 		prevLeft = left
+		consumed.LLY = top - hbelow
 		yOffset = -fontSize * t.LineHeight
 		top += yOffset
 	}
