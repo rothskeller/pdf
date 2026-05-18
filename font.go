@@ -684,6 +684,7 @@ func (tf *trueTypeFontHandler) widthsArray(used []rune) (W Array) {
 			}
 			W = append(W, int(used[i]), w2)
 			i = j
+			continue
 		}
 		// We have a single character.
 		W = append(W, int(used[i]), int(used[i]), widths[i])
